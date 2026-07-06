@@ -1,5 +1,7 @@
 # zeedfai
 
+> Repo: https://github.com/nelsudev/zeedfai — GitOps live via Flux (ver secção "GitOps").
+
 Plataforma de demonstração de **platform engineering** para fraud-scoring em
 streaming: um Kubernetes Operator em Go que gere pipelines de scoring
 (Kafka → scorer), com autoscaling por consumer lag, self-healing por SLO
@@ -59,6 +61,21 @@ Teste rápido de reconciliação (self-healing básico):
 ```bash
 kubectl delete deploy card-payments-eu-scorer   # o operator repõe-no em segundos
 kubectl get deploy -w
+```
+
+## GitOps (Flux)
+
+O cluster kind local está bootstrapped com Flux apontado a este repo
+(`gitops/clusters/staging`). Strimzi, o cluster Kafka e o kube-prometheus-stack
+são geridos por Flux (`HelmRelease` + `Kustomization` com `dependsOn`:
+`infra-sources` → `infra-strimzi` → `infra-kafka-cluster`, e `infra-sources` →
+`infra-monitoring`). O operator zeedfai ainda corre fora do cluster (`make run`)
+porque falta publicar a imagem num registry (GHCR) — próximo passo da Fase 3.
+
+```bash
+export GITHUB_TOKEN=$(gh auth token)
+flux get kustomizations   # todas Ready
+flux get helmreleases -A
 ```
 
 ## Roadmap (fases)
