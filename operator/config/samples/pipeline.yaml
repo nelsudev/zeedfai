@@ -1,0 +1,18 @@
+apiVersion: platform.zeedfai.io/v1alpha1
+kind: ScoringPipeline
+metadata:
+  name: card-payments-eu
+  namespace: default
+spec:
+  model:
+    image: zeedfai/scorer:dev
+  kafka:
+    brokers: zeedfai-kafka-bootstrap.kafka:9092
+    topic: transactions
+    consumerGroup: scoring-eu
+  slo:
+    latencyP999Ms: 250
+  scaling:
+    minReplicas: 2
+    maxReplicas: 20
+    targetLagPerReplica: 1000

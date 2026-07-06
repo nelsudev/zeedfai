@@ -1,0 +1,10 @@
+#cloud-config
+# Bootstrap de um nó zeedfai: k3s (Kubernetes leve) + Flux CLI.
+package_update: true
+packages: [curl, git]
+runcmd:
+  - curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644" sh -
+  - curl -s https://fluxcd.io/install.sh | bash
+  - |
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+    /usr/local/bin/flux install
