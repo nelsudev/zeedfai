@@ -8,6 +8,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	platformv1alpha1 "github.com/bastian/zeedfai/operator/api/v1alpha1"
 	"github.com/bastian/zeedfai/operator/controllers"
@@ -23,9 +24,12 @@ func main() {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
-		HealthProbeBindAddress: ":8081",
-		LeaderElection:         true,
-		LeaderElectionID:       "zeedfai-operator",
+		Metrics:                metricsserver.Options{BindAddress: ":8083"},
+		HealthProbeBindAddress: ":8082",
+		// Leader election só faz sentido in-cluster; em dev local (make run)
+		// fica desligada por omissão.
+		LeaderElection:   os.Getenv("ENABLE_LEADER_ELECTION") == "true",
+		LeaderElectionID: "zeedfai-operator",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

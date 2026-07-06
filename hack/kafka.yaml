@@ -1,5 +1,5 @@
-# Kafka single-node (KRaft) via Strimzi — só para demo local.
-apiVersion: kafka.strimzi.io/v1beta2
+# Kafka single-node (KRaft) via Strimzi 1.x (API v1) — só para demo local.
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaNodePool
 metadata:
   name: dual
@@ -12,17 +12,13 @@ spec:
   storage:
     type: ephemeral
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: Kafka
 metadata:
   name: zeedfai
   namespace: kafka
-  annotations:
-    strimzi.io/node-pools: enabled
-    strimzi.io/kraft: enabled
 spec:
   kafka:
-    version: 3.9.0
     listeners:
       - name: plain
         port: 9092
@@ -37,7 +33,7 @@ spec:
   entityOperator:
     topicOperator: {}
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
   name: transactions
