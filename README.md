@@ -17,6 +17,7 @@ streaming: um Kubernetes Operator em Go que gere pipelines de scoring
 | `operator/` | Operator (controller-runtime): CRD `ScoringPipeline` + reconciler |
 | `scorer/` | Serviço Go que consome Kafka e pontua transações, métricas Prometheus |
 | `loadgen/` | Gerador de transações sintéticas com modo burst (`POST /burst`) |
+| `platform-api/` | API read-only + GUI de operações (lag/réplicas/p99.9 em tempo real, botão de burst) |
 | `gitops/` | Estrutura Flux (staging/prod) — fase 3 |
 | `runbooks/` | Runbooks ligados aos alertas |
 | `scripts/contabo/` | Provisionar um nó k3s+Flux na Contabo via API |
@@ -70,8 +71,12 @@ O cluster kind local está bootstrapped com Flux apontado a este repo
 (`gitops/clusters/staging`). Strimzi, o cluster Kafka e o kube-prometheus-stack
 são geridos por Flux (`HelmRelease` + `Kustomization` com `dependsOn`:
 `infra-sources` → `infra-strimzi` → `infra-kafka-cluster`, e `infra-sources` →
-`infra-monitoring`). O operator zeedfai ainda corre fora do cluster (`make run`)
-porque falta publicar a imagem num registry (GHCR) — próximo passo da Fase 3.
+`infra-monitoring`). O operator zeedfai e o platform-api correm **in-cluster**,
+geridos pelo Flux, com imagens privadas no GHCR (`imagePullSecrets: ghcr-pull`).
+
+GUI de operações: `kubectl -n zeedfai-system port-forward svc/platform-api 8090:8090`
+→ http://localhost:8090 (lista de pipelines, gráficos de lag/réplicas/p99.9/throughput
+dos últimos 30 min, botão de burst).
 
 ```bash
 export GITHUB_TOKEN=$(gh auth token)
@@ -86,7 +91,7 @@ flux get helmreleases -A
 - [x] **F3**: GitOps completo — operator, Strimzi, Kafka, kube-prometheus-stack, todos geridos pelo Flux
 - [x] **F4**: autoscaler por consumer lag + self-healing por SLO p99.9 (verificado: burst 3000ev/s → scale 2→10→2)
 - [x] **F5**: canary com rollback automático (verificado: bad-canary com 50% erros → rollback automático em ~80s, guard anti-loop OK)
-- [ ] **F6**: platform-api (escritas via PR no repo GitOps) + GUI com botão de burst
+- [x] **F6**: platform-api read-only + GUI (gráficos + botão de burst); escritas via PR ficam como extensão documentada
 - [ ] **F7**: cloud — Terraform + Hetzner Cloud (`cluster-autoscaler` de nodes, billing à hora) como demonstração de escala real; Contabo (`scripts/contabo/`) como infra fixa/API alternativa
 
 ## CI/CD (GitHub Actions)

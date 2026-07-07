@@ -1,0 +1,184 @@
+// zeedfai platform-api: fachada de operações/DX sobre os ScoringPipelines.
+//
+// Read-only sobre o cluster (lista pipelines, proxy de métricas Prometheus)
+// mais o disparo de bursts no loadgen (ferramenta de teste, não configuração).
+// Escritas de configuração NÃO passam por aqui — o caminho é um commit no
+// repo GitOps (ver docs/ARCHITECTURE.md); um POST /pipelines que abrisse um
+// PR seria a extensão natural, documentada mas fora de escopo desta fase.
+package main
+
+import (
+	"embed"
+	"encoding/json"
+	"fmt"
+	"io"
+	"io/fs"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+)
+
+//go:embed static
+var static embed.FS
+
+var (
+	gvr = schema.GroupVersionResource{Group: "platform.zeedfai.io", Version: "v1alpha1", Resource: "scoringpipelines"}
+
+	prometheusURL = getenv("PROMETHEUS_URL", "http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090")
+	loadgenURL    = getenv("LOADGEN_URL", "http://loadgen.default.svc:8081")
+)
+
+func main() {
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		// fora do cluster (dev): usa o kubeconfig
+		cfg, err = clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
+		if err != nil {
+			log.Fatalf("kubeconfig: %v", err)
+		}
+	}
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		log.Fatalf("dynamic client: %v", err)
+	}
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /api/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		list, err := dyn.Resource(gvr).List(r.Context(), metav1.ListOptions{})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		type pipeline struct {
+			Name      string `json:"name"`
+			Namespace string `json:"namespace"`
+			Image     string `json:"image"`
+			Replicas  int64  `json:"replicas"`
+			Desired   int64  `json:"desired"`
+			Lag       int64  `json:"lag"`
+			Available string `json:"available"`
+			Canary    string `json:"canary"`
+			SLOms     int64  `json:"sloMs"`
+		}
+		out := []pipeline{}
+		for _, item := range list.Items {
+			p := pipeline{Name: item.GetName(), Namespace: item.GetNamespace()}
+			p.Image, _, _ = unstructured.NestedString(item.Object, "spec", "model", "image")
+			p.SLOms, _, _ = unstructured.NestedInt64(item.Object, "spec", "slo", "latencyP999Ms")
+			p.Replicas, _, _ = unstructured.NestedInt64(item.Object, "status", "replicas")
+			p.Desired, _, _ = unstructured.NestedInt64(item.Object, "status", "desiredReplicas")
+			p.Lag, _, _ = unstructured.NestedInt64(item.Object, "status", "consumerLag")
+			conds, _, _ := unstructured.NestedSlice(item.Object, "status", "conditions")
+			for _, c := range conds {
+				cm, ok := c.(map[string]any)
+				if !ok {
+					continue
+				}
+				switch cm["type"] {
+				case "Available":
+					p.Available, _ = cm["status"].(string)
+				case "CanaryHealthy":
+					p.Canary, _ = cm["reason"].(string)
+				}
+			}
+			out = append(out, p)
+		}
+		writeJSON(w, out)
+	})
+
+	// Proxy de range-queries ao Prometheus para os gráficos da GUI.
+	// Só queries pré-definidas — nunca PromQL arbitrário vindo do browser.
+	mux.HandleFunc("GET /api/pipelines/{name}/metrics", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		queries := map[string]string{
+			"lag":      fmt.Sprintf(`zeedfai_operator_consumer_lag{pipeline=%q}`, name),
+			"replicas": fmt.Sprintf(`zeedfai_operator_ready_replicas{pipeline=%q}`, name),
+			"p999ms":   fmt.Sprintf(`1000 * histogram_quantile(0.999, sum(rate(zeedfai_scorer_latency_seconds_bucket{pipeline=%q}[2m])) by (le))`, name),
+			"rate":     fmt.Sprintf(`sum(rate(zeedfai_scorer_events_total{pipeline=%q}[1m]))`, name),
+		}
+		end := time.Now().Unix()
+		start := end - 30*60
+		out := map[string]any{}
+		for key, q := range queries {
+			u := fmt.Sprintf("%s/api/v1/query_range?query=%s&start=%d&end=%d&step=15",
+				strings.TrimRight(prometheusURL, "/"), url.QueryEscape(q), start, end)
+			resp, err := http.Get(u)
+			if err != nil {
+				continue
+			}
+			var body struct {
+				Data struct {
+					Result []struct {
+						Values [][2]any `json:"values"`
+					} `json:"result"`
+				} `json:"data"`
+			}
+			err = json.NewDecoder(resp.Body).Decode(&body)
+			resp.Body.Close()
+			if err != nil || len(body.Data.Result) == 0 {
+				out[key] = [][2]any{}
+				continue
+			}
+			out[key] = body.Data.Result[0].Values
+		}
+		writeJSON(w, out)
+	})
+
+	mux.HandleFunc("POST /api/burst", func(w http.ResponseWriter, r *http.Request) {
+		rate := r.URL.Query().Get("rate")
+		seconds := r.URL.Query().Get("seconds")
+		if rate == "" {
+			rate = "2000"
+		}
+		if seconds == "" {
+			seconds = "120"
+		}
+		u := fmt.Sprintf("%s/burst?rate=%s&seconds=%s", strings.TrimRight(loadgenURL, "/"), url.QueryEscape(rate), url.QueryEscape(seconds))
+		req, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, u, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	})
+
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
+
+	// GUI (ficheiros embebidos no binário — sem dependências externas)
+	staticFS, err := fs.Sub(static, "static")
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux.Handle("/", http.FileServerFS(staticFS))
+
+	addr := getenv("LISTEN_ADDR", ":8090")
+	log.Printf("platform-api listening on %s (prometheus=%s loadgen=%s)", addr, prometheusURL, loadgenURL)
+	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func getenv(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
+

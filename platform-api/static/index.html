@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zeedfai · platform</title>
+<style>
+  :root {
+    --surface: #fcfcfb; --surface-2: #f2f1ef; --border: #e3e2de;
+    --text: #0b0b0b; --text-2: #52514e; --text-3: #8a897f;
+    --series: #2a78d6; --serious: #e34948; --good: #008300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1a1a19; --surface-2: #242422; --border: #3a3936;
+      --text: #ffffff; --text-2: #c3c2b7; --text-3: #8a897f;
+      --series: #3987e5; --serious: #e66767; --good: #46a758;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--surface); color: var(--text);
+         font: 14px/1.45 ui-sans-serif, system-ui, sans-serif; padding: 24px; }
+  h1 { font-size: 18px; font-weight: 650; }
+  h1 small { color: var(--text-3); font-weight: 400; margin-left: 8px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 20px; }
+  th, td { text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-2); font-weight: 500; font-size: 12px; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+  .pill.ok { background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); }
+  .pill.bad { background: color-mix(in srgb, var(--serious) 15%, transparent); color: var(--serious); }
+  .pill.na { background: var(--surface-2); color: var(--text-3); }
+  button { background: var(--series); color: #fff; border: 0; border-radius: 6px;
+           padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .card { background: var(--surface-2); border: 1px solid var(--border);
+          border-radius: 10px; padding: 12px 14px; }
+  .card h2 { font-size: 13px; font-weight: 600; color: var(--text-2); margin-bottom: 2px; }
+  .card .last { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  svg { display: block; width: 100%; height: 120px; margin-top: 6px; }
+  .tip { position: fixed; pointer-events: none; background: var(--surface);
+         border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+         font-size: 12px; display: none; box-shadow: 0 2px 8px rgba(0,0,0,.15); z-index: 10; }
+  #msg { color: var(--text-2); font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>zeedfai <small>scoring pipelines — operações</small></h1>
+
+<table id="pipes"><thead><tr>
+  <th>pipeline</th><th>imagem</th><th>réplicas (prontas/desejadas)</th>
+  <th>consumer lag</th><th>SLO p99.9</th><th>disponível</th><th>canary</th>
+</tr></thead><tbody></tbody></table>
+
+<div class="row">
+  <button id="burst">🔥 Burst 2000 ev/s · 120 s</button>
+  <span id="msg"></span>
+</div>
+
+<div class="grid">
+  <div class="card"><h2>Consumer lag</h2><div class="last" id="lag-last">—</div><svg id="lag"></svg></div>
+  <div class="card"><h2>Réplicas prontas</h2><div class="last" id="replicas-last">—</div><svg id="replicas"></svg></div>
+  <div class="card"><h2>Latência p99.9 (ms) — SLO 250</h2><div class="last" id="p999ms-last">—</div><svg id="p999ms"></svg></div>
+  <div class="card"><h2>Throughput (ev/s)</h2><div class="last" id="rate-last">—</div><svg id="rate"></svg></div>
+</div>
+
+<div class="tip" id="tip"></div>
+
+<script>
+const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+const fmt = v => v >= 1000 ? (v/1000).toFixed(1) + 'k' : (Math.round(v*10)/10).toString();
+let pipeline = null;
+
+async function loadPipelines() {
+  const r = await fetch('/api/pipelines'); const list = await r.json();
+  const tb = document.querySelector('#pipes tbody'); tb.innerHTML = '';
+  for (const p of list) {
+    pipeline ??= p.name;
+    const avail = p.available === 'True' ? '<span class="pill ok">True</span>'
+                : '<span class="pill bad">' + (p.available || '?') + '</span>';
+    const canary = p.canary ? '<span class="pill ' +
+      (p.canary === 'EvaluationPassed' ? 'ok' : p.canary === 'RolledBack' ? 'bad' : 'na') +
+      '">' + p.canary + '</span>' : '<span class="pill na">off</span>';
+    tb.insertAdjacentHTML('beforeend', `<tr>
+      <td><b>${p.name}</b></td><td>${p.image.split('/').pop()}</td>
+      <td>${p.replicas} / ${p.desired}</td><td>${p.lag}</td>
+      <td>${p.sloMs} ms</td><td>${avail}</td><td>${canary}</td></tr>`);
+  }
+}
+
+// gráfico de linha de série única: grid recessivo, direct label do último
+// valor no cartão, crosshair + tooltip no hover, linha de SLO no p999ms.
+function draw(id, values, sloLine) {
+  const svg = document.getElementById(id);
+  const W = svg.clientWidth || 320, H = 120, P = {t: 8, r: 8, b: 16, l: 34};
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.innerHTML = '';
+  const pts = values.map(v => [Number(v[0]), Number(v[1])]).filter(p => isFinite(p[1]));
+  document.getElementById(id + '-last').textContent = pts.length ? fmt(pts[pts.length-1][1]) : '—';
+  if (pts.length < 2) return;
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = 0, y1 = Math.max(...ys, sloLine || 0) * 1.1 || 1;
+  const X = t => P.l + (t - x0) / (x1 - x0) * (W - P.l - P.r);
+  const Y = v => H - P.b - (v - y0) / (y1 - y0) * (H - P.t - P.b);
+  const ns = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => { const e = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); svg.appendChild(e); return e; };
+  // grid: 3 linhas horizontais recessivas + labels de eixo
+  for (let i = 0; i <= 2; i++) {
+    const v = y0 + (y1 - y0) * i / 2, y = Y(v);
+    el('line', {x1: P.l, x2: W - P.r, y1: y, y2: y, stroke: css('--border'), 'stroke-width': 1});
+    const t = el('text', {x: P.l - 4, y: y + 3, 'text-anchor': 'end', 'font-size': 9, fill: css('--text-3')});
+    t.textContent = fmt(v);
+  }
+  if (sloLine) {
+    el('line', {x1: P.l, x2: W - P.r, y1: Y(sloLine), y2: Y(sloLine),
+      stroke: css('--serious'), 'stroke-width': 1, 'stroke-dasharray': '4 3'});
+  }
+  el('path', {d: 'M' + pts.map(p => X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join('L'),
+    fill: 'none', stroke: css('--series'), 'stroke-width': 2, 'stroke-linejoin': 'round'});
+  // hover: crosshair + tooltip no ponto mais próximo
+  const tip = document.getElementById('tip');
+  const cross = el('line', {y1: P.t, y2: H - P.b, stroke: css('--text-3'), 'stroke-width': 1, visibility: 'hidden'});
+  const dot = el('circle', {r: 4, fill: css('--series'), stroke: css('--surface'), 'stroke-width': 2, visibility: 'hidden'});
+  svg.onmousemove = e => {
+    const r = svg.getBoundingClientRect();
+    const t = x0 + (e.clientX - r.left - P.l) / (W - P.l - P.r) * (x1 - x0);
+    const p = pts.reduce((a, b) => Math.abs(b[0] - t) < Math.abs(a[0] - t) ? b : a);
+    cross.setAttribute('x1', X(p[0])); cross.setAttribute('x2', X(p[0])); cross.setAttribute('visibility', 'visible');
+    dot.setAttribute('cx', X(p[0])); dot.setAttribute('cy', Y(p[1])); dot.setAttribute('visibility', 'visible');
+    tip.style.display = 'block'; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY - 10) + 'px';
+    tip.textContent = new Date(p[0] * 1000).toLocaleTimeString() + ' · ' + fmt(p[1]);
+  };
+  svg.onmouseleave = () => { cross.setAttribute('visibility', 'hidden');
+    dot.setAttribute('visibility', 'hidden'); tip.style.display = 'none'; };
+}
+
+async function loadMetrics() {
+  if (!pipeline) return;
+  const r = await fetch(`/api/pipelines/${pipeline}/metrics`); const m = await r.json();
+  draw('lag', m.lag || []); draw('replicas', m.replicas || []);
+  draw('p999ms', m.p999ms || [], 250); draw('rate', m.rate || []);
+}
+
+document.getElementById('burst').onclick = async e => {
+  e.target.disabled = true;
+  const msg = document.getElementById('msg');
+  try { const r = await fetch('/api/burst?rate=2000&seconds=120', {method: 'POST'});
+    msg.textContent = await r.text(); }
+  catch (err) { msg.textContent = 'erro: ' + err; }
+  setTimeout(() => { e.target.disabled = false; }, 5000);
+};
+
+async function tick() { await loadPipelines(); await loadMetrics(); }
+tick(); setInterval(tick, 15000);
+</script>
+</body>
+</html>
