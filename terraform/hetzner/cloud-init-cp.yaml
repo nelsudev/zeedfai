@@ -1,0 +1,5 @@
+#cloud-config
+package_update: true
+packages: [curl]
+runcmd:
+  - curl -sfL https://get.k3s.io | K3S_TOKEN="${k3s_token}" INSTALL_K3S_EXEC="server --write-kubeconfig-mode 644 --node-ip 10.0.1.10 --flannel-iface enp7s0" sh -

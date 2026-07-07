@@ -6,3 +6,6 @@ operator/operator
 .DS_Store
 kubeconfig*
 v2.3.0
+.terraform/
+*.tfstate*
+.terraform.lock.hcl

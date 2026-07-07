@@ -10,6 +10,35 @@ streaming: um Kubernetes Operator em Go que gere pipelines de scoring
 
 > Nome é um anagrama afetuoso; projeto pessoal, sem afiliação com a Feedzai.
 
+## Arquitetura
+
+```mermaid
+flowchart LR
+  subgraph git [GitHub: nelsudev/zeedfai]
+    G[(main)]
+  end
+  subgraph cluster [Cluster Kubernetes]
+    F[Flux] -->|aplica| OP[zeedfai-operator]
+    F -->|HelmRelease| K[Kafka Strimzi]
+    F -->|HelmRelease| P[Prometheus + Grafana]
+    OP -->|reconcilia| D[Deployment scorer + canary]
+    OP -->|gera| SM[ServiceMonitor / PrometheusRule / PDB]
+    OP -->|lê lag| K
+    OP -->|lê p99.9 / error rate| P
+    LG[loadgen] -->|transactions| K
+    K -->|consome| D
+    D -->|métricas| P
+    API[platform-api + GUI] -->|read-only| OP
+    API -->|queries| P
+    API -->|burst| LG
+  end
+  G -->|sync| F
+```
+
+O ciclo: commit no Git → Flux aplica → operator reconcilia pipelines →
+autoscaler reage ao consumer lag → self-healing reage ao SLO → canary valida
+imagens novas com rollback automático → GUI mostra tudo em tempo real.
+
 ## Componentes
 
 | Diretório | O quê |
@@ -92,7 +121,7 @@ flux get helmreleases -A
 - [x] **F4**: autoscaler por consumer lag + self-healing por SLO p99.9 (verificado: burst 3000ev/s → scale 2→10→2)
 - [x] **F5**: canary com rollback automático (verificado: bad-canary com 50% erros → rollback automático em ~80s, guard anti-loop OK)
 - [x] **F6**: platform-api read-only + GUI (gráficos + botão de burst); escritas via PR ficam como extensão documentada
-- [ ] **F7**: cloud — Terraform + Hetzner Cloud (`cluster-autoscaler` de nodes, billing à hora) como demonstração de escala real; Contabo (`scripts/contabo/`) como infra fixa/API alternativa
+- [~] **F7**: Terraform Hetzner pronto e validado (`terraform/hetzner/`) — `apply` pendente de conta/token Hetzner; Contabo (`scripts/contabo/`) como alternativa fixa
 
 ## CI/CD (GitHub Actions)
 
