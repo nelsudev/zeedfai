@@ -9,8 +9,6 @@ streaming: um Kubernetes Operator em Go que gere pipelines de scoring
 (Kafka → scorer), com autoscaling por consumer lag, self-healing por SLO
 (p99.9 < 250 ms) e entrega via GitOps (FluxCD).
 
-> Nome é um anagrama afetuoso; projeto pessoal, sem afiliação com a Feedzai.
-
 ## Arquitetura
 
 ```mermaid
