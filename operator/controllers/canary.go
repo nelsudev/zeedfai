@@ -35,6 +35,16 @@ func (r *ScoringPipelineReconciler) reconcileCanary(ctx context.Context, sp *pla
 	canaryName := sp.Name + "-scorer-canary"
 
 	active := sp.Spec.Canary.Enabled && sp.Spec.Canary.Image != "" && sp.Spec.Canary.Image != sp.Spec.Model.Image
+
+	// Guard anti-loop: se este mesmo spec (mesma Generation) já sofreu
+	// rollback, não recriar o canary — senão o ciclo criar→falhar→rollback
+	// repetir-se-ia para sempre. Qualquer alteração ao spec (nova imagem,
+	// desativar o canary) incrementa a Generation e limpa o guard.
+	if cond := meta.FindStatusCondition(sp.Status.Conditions, "CanaryHealthy"); active &&
+		cond != nil && cond.Reason == "RolledBack" && cond.ObservedGeneration == sp.Generation {
+		active = false
+	}
+
 	if !active {
 		if sp.Status.CanaryStartedAt != nil {
 			sp.Status.CanaryStartedAt = nil
@@ -102,7 +112,7 @@ func (r *ScoringPipelineReconciler) reconcileCanary(ctx context.Context, sp *pla
 			return fmt.Errorf("rollback canary: %w", err)
 		}
 		sp.Status.CanaryStartedAt = nil
-		meta.SetStatusCondition(&sp.Status.Conditions, metav1.Condition{Type: "CanaryHealthy", Status: metav1.ConditionFalse, Reason: "RolledBack", Message: fmt.Sprintf("error rate %.2f%% exceeded threshold %.2f%%", errRate, threshold)})
+		meta.SetStatusCondition(&sp.Status.Conditions, metav1.Condition{Type: "CanaryHealthy", ObservedGeneration: sp.Generation, Status: metav1.ConditionFalse, Reason: "RolledBack", Message: fmt.Sprintf("error rate %.2f%% exceeded threshold %.2f%%", errRate, threshold)})
 		return nil
 	}
 
@@ -111,10 +121,10 @@ func (r *ScoringPipelineReconciler) reconcileCanary(ctx context.Context, sp *pla
 		evalWindow = 120 * time.Second
 	}
 	if time.Since(sp.Status.CanaryStartedAt.Time) >= evalWindow {
-		meta.SetStatusCondition(&sp.Status.Conditions, metav1.Condition{Type: "CanaryHealthy", Status: metav1.ConditionTrue, Reason: "EvaluationPassed",
+		meta.SetStatusCondition(&sp.Status.Conditions, metav1.Condition{Type: "CanaryHealthy", ObservedGeneration: sp.Generation, Status: metav1.ConditionTrue, Reason: "EvaluationPassed",
 			Message: "canary survived the evaluation window without exceeding the error threshold; safe to promote via a Git commit (spec.model.image)"})
 	} else {
-		meta.SetStatusCondition(&sp.Status.Conditions, metav1.Condition{Type: "CanaryHealthy", Status: metav1.ConditionUnknown, Reason: "Evaluating", Message: "canary analysis in progress"})
+		meta.SetStatusCondition(&sp.Status.Conditions, metav1.Condition{Type: "CanaryHealthy", ObservedGeneration: sp.Generation, Status: metav1.ConditionUnknown, Reason: "Evaluating", Message: "canary analysis in progress"})
 	}
 	return nil
 }

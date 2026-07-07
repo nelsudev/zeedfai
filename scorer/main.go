@@ -79,6 +79,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	faultRate, _ := strconv.ParseFloat(getenv("FAULT_RATE", "0"), 64)
 	log.Printf("scorer: brokers=%s topic=%s group=%s", brokers, topic, group)
 
 	for {
@@ -93,7 +94,6 @@ func main() {
 			}
 			continue
 		}
-		faultRate, _ := strconv.ParseFloat(getenv("FAULT_RATE", "0"), 64)
 		fetches.EachRecord(func(r *kgo.Record) {
 			start := time.Now()
 			if faultRate > 0 && rand.Float64() < faultRate {

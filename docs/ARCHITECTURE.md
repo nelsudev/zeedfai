@@ -220,6 +220,13 @@ label `pipeline`. Existem porque o `consumerLag` calculado em
 histórico) — expor como métrica Prometheus dá-lhe uma série temporal, que é
 o que a GUI da Fase 6 vai desenhar num gráfico lag-vs-réplicas-vs-tempo.
 
+Detalhe que custou um bug: têm de ser registadas no
+`sigs.k8s.io/controller-runtime/pkg/metrics.Registry` (via
+`promauto.With(...)`), porque o metrics server do manager em `:8083` serve
+**esse** registry — o `prometheus.DefaultRegisterer` do client_golang não é
+servido pelo controller-runtime, e métricas registadas lá simplesmente
+nunca apareceriam no scrape.
+
 #### `operator/controllers/util.go`
 
 Uma função (`intstrFromInt`) para converter `int` em `intstr.IntOrString`
@@ -313,6 +320,23 @@ preciso Istio/Linkerd nem um proxy de tráfego: o particionamento do Kafka
 - `evaluationSeconds` (default 120): tempo mínimo a correr sem violar o
   threshold antes de a condition passar a `CanaryHealthy=True`.
 
+**Guard anti-loop (importante):** depois de um rollback, o spec continua
+com `canary.enabled=true` e a mesma imagem — sem proteção, o próximo
+reconcile recriaria o canary mau, que voltaria a falhar, num ciclo
+infinito de criar→falhar→rollback. Por isso o rollback grava a condition
+`CanaryHealthy=False/RolledBack` com `observedGeneration` igual à
+Generation atual do spec, e o controller recusa-se a recriar o canary
+enquanto a Generation não mudar. Qualquer edição ao spec (imagem nova,
+`enabled: false`) incrementa a Generation e limpa o guard naturalmente.
+
+**Trade-off fail-open da análise:** tal como no SLO check do autoscaler,
+se o Prometheus estiver indisponível a `canaryErrorRatePct` devolve
+"sem dados" e o canary continua a correr sem ser avaliado — uma falha de
+observabilidade não dispara rollbacks espúrios, mas também significa que
+um canary mau pode sobreviver mais tempo se o Prometheus cair ao mesmo
+tempo. Aceitável para esta demo; em produção juntar-se-ia um guard de
+"sem dados durante X minutos → rollback por precaução".
+
 **Query Prometheus usada para a taxa de erro do canary**
 (`canaryErrorRatePct` em `canary.go`):
 
@@ -332,6 +356,10 @@ próximo passo pendente):**
 1. Build de uma imagem "candidata má":
    `docker build --build-arg FAULT_RATE=0.5 -t ghcr.io/nelsudev/zeedfai-scorer:bad-canary scorer/`
 2. `kubectl patch scoringpipeline card-payments-eu --type merge -p '{"spec":{"canary":{"enabled":true,"image":"ghcr.io/nelsudev/zeedfai-scorer:bad-canary"}}}'`
+   — atenção: este pipeline é gerido pelo Flux (`infra-demo`), portanto o
+   patch é revertido na próxima sync (~30 min). Para um teste rápido serve;
+   o caminho "correto" é editar `gitops/infrastructure/demo/pipeline.yaml`
+   e commitar, que é exatamente como se faria em produção.
 3. Observar: `<pipeline>-scorer-canary` Deployment aparece, e em minutos o
    Event `CanaryRolledBack` e a condition `CanaryHealthy=False` aparecem, e
    o Deployment canary desaparece sozinho.
