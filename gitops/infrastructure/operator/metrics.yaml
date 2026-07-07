@@ -1,0 +1,26 @@
+# Expõe as métricas do próprio operator (zeedfai_operator_*: lag, réplicas
+# desejadas/prontas por pipeline) ao Prometheus — é daqui que a GUI do
+# platform-api tira as séries temporais de lag e réplicas.
+apiVersion: v1
+kind: Service
+metadata:
+  name: zeedfai-operator-metrics
+  namespace: zeedfai-system
+  labels: {app: zeedfai-operator}
+spec:
+  selector: {app: zeedfai-operator}
+  ports:
+    - name: metrics
+      port: 8083
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: zeedfai-operator
+  namespace: zeedfai-system
+spec:
+  selector:
+    matchLabels: {app: zeedfai-operator}
+  endpoints:
+    - port: metrics
+      interval: 15s
