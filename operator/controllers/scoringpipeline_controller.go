@@ -137,6 +137,9 @@ func (r *ScoringPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: sp.Name + "-scorer", Namespace: sp.Namespace}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, svc, func() error {
+		// Labels no próprio Service: é por elas que o ServiceMonitor o
+		// seleciona (spec.selector do Service só seleciona pods).
+		svc.Labels = map[string]string{"app.kubernetes.io/name": "zeedfai-scorer", "zeedfai.io/pipeline": sp.Name}
 		svc.Spec.Selector = map[string]string{"zeedfai.io/pipeline": sp.Name}
 		svc.Spec.Ports = []corev1.ServicePort{{Name: "metrics", Port: 8080}}
 		return controllerutil.SetControllerReference(&sp, svc, r.Scheme())
