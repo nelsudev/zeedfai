@@ -23,3 +23,13 @@ spec:
   values:
     grafana:
       adminPassword: zeedfai
+    # Por default o chart só seleciona ServiceMonitors/Rules com o label
+    # release=monitoring — o que tornaria invisíveis os recursos gerados
+    # pelo zeedfai-operator (e cegaria a análise de canary e o SLO check,
+    # que "falham aberto"). Nil selectors = selecionar todos no cluster.
+    prometheus:
+      prometheusSpec:
+        serviceMonitorSelectorNilUsesHelmValues: false
+        podMonitorSelectorNilUsesHelmValues: false
+        ruleSelectorNilUsesHelmValues: false
+        probeSelectorNilUsesHelmValues: false
