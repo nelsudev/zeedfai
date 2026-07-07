@@ -7,14 +7,12 @@ spec:
   model:
     image: ghcr.io/nelsudev/zeedfai-scorer:0.2.0
     imagePullSecret: ghcr-pull
-  # Canary deliberadamente mau (FAULT_RATE=0.5) para demonstrar o rollback
-  # automático; após a demo, remover este bloco via novo commit.
+  # Demo de rollback automático de canary (2026-07-07): com
+  # image=zeedfai-scorer:bad-canary (FAULT_RATE=0.5) aqui, o operator
+  # detetou a taxa de erro e fez rollback sozinho em ~80s — ver Event
+  # CanaryRolledBack no histórico. Reativar com uma imagem candidata real.
   canary:
-    enabled: true
-    image: ghcr.io/nelsudev/zeedfai-scorer:bad-canary
-    stepPercent: 20
-    errorRateThresholdPct: 5
-    evaluationSeconds: 120
+    enabled: false
   kafka:
     brokers: zeedfai-kafka-bootstrap.kafka:9092
     topic: transactions

@@ -85,7 +85,7 @@ flux get helmreleases -A
 - [x] **F2b**: ServiceMonitor + PrometheusRule com `runbook_url` + PDB (métricas rotuladas por `pipeline`)
 - [x] **F3**: GitOps completo — operator, Strimzi, Kafka, kube-prometheus-stack, todos geridos pelo Flux
 - [x] **F4**: autoscaler por consumer lag + self-healing por SLO p99.9 (verificado: burst 3000ev/s → scale 2→10→2)
-- [ ] **F5**: canary com rollback automático
+- [x] **F5**: canary com rollback automático (verificado: bad-canary com 50% erros → rollback automático em ~80s, guard anti-loop OK)
 - [ ] **F6**: platform-api (escritas via PR no repo GitOps) + GUI com botão de burst
 - [ ] **F7**: cloud — Terraform + Hetzner Cloud (`cluster-autoscaler` de nodes, billing à hora) como demonstração de escala real; Contabo (`scripts/contabo/`) como infra fixa/API alternativa
 

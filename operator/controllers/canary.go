@@ -132,7 +132,9 @@ func (r *ScoringPipelineReconciler) reconcileCanary(ctx context.Context, sp *pla
 // canaryErrorRatePct consulta o Prometheus: % de eventos com erro nos
 // últimos 2 minutos, para os pods com role=canary do pipeline.
 func canaryErrorRatePct(ctx context.Context, pipeline string) (float64, bool) {
-	q := fmt.Sprintf(`100 * sum(rate(zeedfai_scorer_errors_total{pipeline=%q,role="canary"}[2m])) / clamp_min(sum(rate(zeedfai_scorer_events_total{pipeline=%q,role="canary"}[2m])), 1)`, pipeline, pipeline)
+	// Denominador = eventos processados + errados, porque um evento que erra
+	// não incrementa events_total — senão a percentagem podia exceder 100%.
+	q := fmt.Sprintf(`100 * sum(rate(zeedfai_scorer_errors_total{pipeline=%q,role="canary"}[2m])) / clamp_min(sum(rate(zeedfai_scorer_events_total{pipeline=%q,role="canary"}[2m])) + sum(rate(zeedfai_scorer_errors_total{pipeline=%q,role="canary"}[2m])), 0.001)`, pipeline, pipeline, pipeline)
 	u := fmt.Sprintf("%s/api/v1/query?query=%s", strings.TrimRight(prometheusURL, "/"), url.QueryEscape(q))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
