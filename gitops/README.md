@@ -1,21 +1,21 @@
-# GitOps (Fase 3)
+# GitOps
 
-Estrutura Flux prevista:
+Flux structure:
 
 ```
 gitops/
 ├── clusters/
-│   ├── staging/        # flux bootstrap aponta aqui
+│   ├── staging/        # flux bootstrap points here
 │   └── prod/
 └── infrastructure/     # HelmReleases: strimzi, kube-prometheus-stack, operator
 ```
 
-Bootstrap (quando o repo estiver no GitHub):
+Bootstrap (once the repo is on GitHub):
 
 ```bash
 flux bootstrap github --owner=<user> --repository=zeedfai \
   --branch=main --path=gitops/clusters/staging --personal
 ```
 
-Inclui ImageRepository/ImagePolicy/ImageUpdateAutomation para o scorer:
-push de nova tag → commit automático do Flux → rollout pelo operator.
+Includes ImageRepository/ImagePolicy/ImageUpdateAutomation for the scorer:
+push a new tag → Flux commits automatically → the operator rolls it out.

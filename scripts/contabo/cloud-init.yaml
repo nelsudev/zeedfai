@@ -1,5 +1,5 @@
 #cloud-config
-# Bootstrap de um nó zeedfai: k3s (Kubernetes leve) + Flux CLI.
+# Bootstraps a zeedfai node: k3s (lightweight Kubernetes) + Flux CLI.
 package_update: true
 packages: [curl, git]
 runcmd:

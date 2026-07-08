@@ -1,5 +1,5 @@
-// zeedfai loadgen: gera transações sintéticas para o Kafka a uma taxa
-// configurável, com modo burst via HTTP (POST /burst?rate=2000&seconds=120).
+// zeedfai loadgen: generates synthetic transactions for Kafka at a
+// configurable rate, with a burst mode via HTTP (POST /burst?rate=2000&seconds=120).
 package main
 
 import (
@@ -39,7 +39,7 @@ func main() {
 	}
 	defer cl.Close()
 
-	// rate em ev/s, alterável em runtime pelo endpoint de burst
+	// rate in ev/s, adjustable at runtime via the burst endpoint
 	var rate atomic.Int64
 	rate.Store(baseRate)
 

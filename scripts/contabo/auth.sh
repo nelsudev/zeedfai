@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Obtém um access token da API da Contabo (OAuth2 password grant).
-# Requer: CNTB_CLIENT_ID, CNTB_CLIENT_SECRET, CNTB_API_USER, CNTB_API_PASS
+# Gets an access token from the Contabo API (OAuth2 password grant).
+# Requires: CNTB_CLIENT_ID, CNTB_CLIENT_SECRET, CNTB_API_USER, CNTB_API_PASS
 set -euo pipefail
 curl -fsS -d "client_id=${CNTB_CLIENT_ID}" \
   -d "client_secret=${CNTB_CLIENT_SECRET}" \

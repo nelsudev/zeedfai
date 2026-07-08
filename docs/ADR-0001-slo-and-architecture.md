@@ -1,24 +1,25 @@
-# ADR-0001: SLO de latência e arquitetura de referência
+# ADR-0001: Latency SLO and reference architecture
 
-## Contexto
+## Context
 
-Sistemas de fraud-scoring são mission-critical: a decisão tem de acontecer
-dentro do fluxo do pagamento. A referência da indústria (ver o paper do
-Railgun da Feedzai, arXiv:2009.00361) é **scoring em < 250 ms no p99.9**.
+Fraud-scoring systems are mission-critical: the decision has to happen
+within the payment flow. The industry reference (see Feedzai's Railgun
+paper, arXiv:2009.00361) is **scoring in < 250 ms at p99.9**.
 
-## Decisão
+## Decision
 
-- SLO default do `ScoringPipeline`: `latencyP999Ms: 250`.
-- Autoscaling orientado a **consumer lag** (métrica de negócio), não CPU:
-  lag é o indicador antecipado de violação de latência num consumidor Kafka.
-- Scale-down com cooldown/histerese para evitar flapping em tráfego bursty.
-- Kubernetes Operator (e não Helm+HPA) porque o ciclo de vida inclui lógica
-  de domínio: decisões por SLO, restart de consumers presos, canary por
+- Default SLO for `ScoringPipeline`: `latencyP999Ms: 250`.
+- Autoscaling driven by **consumer lag** (a business metric), not CPU: lag
+  is the leading indicator of a latency violation in a Kafka consumer.
+- Scale-down with cooldown/hysteresis to avoid flapping under bursty traffic.
+- Kubernetes Operator (rather than Helm+HPA) because the lifecycle includes
+  domain logic: SLO-driven decisions, restarting stuck consumers, canary by
   consumer group.
 
-## Consequências
+## Consequences
 
-- O controller precisa de acesso ao Kafka (AdminClient para lag) e ao
-  Prometheus (latência) — fase 4.
-- kind chega para dev; a validação de p99.9 sob carga real requer um cluster
-  com nodes dedicados (fase 7: GKE/EKS via Terraform, ou k3s na Contabo).
+- The controller needs access to Kafka (AdminClient for lag) and to
+  Prometheus (latency) — autoscaler phase.
+- kind is enough for dev; validating p99.9 under real load requires a
+  cluster with dedicated nodes (cloud phase: GKE/EKS via Terraform, or k3s
+  on Contabo).

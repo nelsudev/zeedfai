@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cancela/destrói uma instância Contabo: ./delete-instance.sh <instanceId>
+# Cancels/destroys a Contabo instance: ./delete-instance.sh <instanceId>
 set -euo pipefail
 cd "$(dirname "$0")"
 [ $# -eq 1 ] || { echo "usage: $0 <instanceId>"; exit 1; }

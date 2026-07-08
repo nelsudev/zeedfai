@@ -1,62 +1,62 @@
-# Post-mortem: outage do broker Kafka (simulado)
+# Post-mortem: Kafka broker outage (simulated)
 
-**Data:** 2026-07-07 · **Duração:** ~75 s · **Severidade:** SEV-2 (scoring parado, sem perda de dados)
-**Tipo:** incidente simulado deliberadamente (game day) para exercitar a resposta.
+**Date:** 2026-07-07 · **Duration:** ~75 s · **Severity:** SEV-2 (scoring stopped, no data loss)
+**Type:** deliberately simulated incident (game day) to exercise the response.
 
-## Impacto
+## Impact
 
-- Scoring parado durante ~75 s: os consumidores não conseguiam ligar ao
-  broker (`connection refused`), nenhuma transação foi pontuada na janela.
-- **Sem perda de dados**: o loadgen também não conseguia produzir, e o que
-  produziu antes ficou no tópico — ao recuperar, os consumidores retomaram
-  do offset committed. Num cenário real com produtores externos, o lag
-  acumularia e o autoscaler faria scale-out na recuperação.
+- Scoring stopped for ~75 s: consumers couldn't connect to the broker
+  (`connection refused`), no transaction was scored in that window.
+- **No data loss**: the loadgen also couldn't produce, and whatever it had
+  produced before stayed in the topic — on recovery, consumers resumed from
+  the committed offset. In a real scenario with external producers, lag
+  would accumulate and the autoscaler would scale out on recovery.
 
 ## Timeline (UTC)
 
-| Hora | Evento |
+| Time | Event |
 |---|---|
-| 05:01:25 | `kubectl -n kafka delete pod zeedfai-dual-0` (injeção da falha) |
-| 05:01:29 | Scorers começam a registar `unable to dial ... connection refused`; `zeedfai_scorer_errors_total` não incrementa (erros de fetch são logados, não contados como eventos) |
-| 05:01:43 | StrimziPodSet recria o pod do broker (0/1 Running) |
-| ~05:02:37 | Broker Ready; consumidores religam-se sem restart (retry interno do franz-go) |
-| 05:03:10 | Consumo confirmado a fluir (`events_total` a crescer); lag drenado |
+| 05:01:25 | `kubectl -n kafka delete pod zeedfai-dual-0` (fault injection) |
+| 05:01:29 | Scorers start logging `unable to dial ... connection refused`; `zeedfai_scorer_errors_total` doesn't increment (fetch errors are logged, not counted as events) |
+| 05:01:43 | StrimziPodSet recreates the broker pod (0/1 Running) |
+| ~05:02:37 | Broker Ready; consumers reconnect without a restart (franz-go's internal retry) |
+| 05:03:10 | Consumption confirmed flowing again (`events_total` climbing); lag drained |
 
-## Deteção
+## Detection
 
-- Neste exercício: observação direta. Em operação real, os sinais seriam
-  o alerta `ZeedfaiConsumerLagGrowing` (se produtores externos continuassem
-  a produzir) e a métrica `zeedfai_operator_consumer_lag` em flatline/erro.
-- **Gap identificado:** não existe alerta para "operator não consegue medir
-  o lag" (broker em baixo = autoscaler cego, a manter a última decisão).
-  Durante a janela, o operator logou `consumer lag unavailable` e manteve
-  as réplicas — comportamento fail-safe correto, mas invisível para quem
-  está de serviço.
+- In this exercise: direct observation. In real operation, the signals
+  would be the `ZeedfaiConsumerLagGrowing` alert (if external producers kept
+  producing) and the `zeedfai_operator_consumer_lag` metric flatlining or
+  erroring.
+- **Gap identified:** there's no alert for "operator can't measure lag"
+  (broker down = the autoscaler is blind, holding its last decision). During
+  the window, the operator logged `consumer lag unavailable` and kept
+  replicas steady — the correct fail-safe behavior, but invisible to
+  whoever's on call.
 
-## O que correu bem
+## What went well
 
-- **Auto-recuperação total sem intervenção humana**: Strimzi recriou o
-  broker; os consumidores (franz-go) religaram-se sozinhos; o operator
-  manteve o estado estável durante a cegueira em vez de reagir a ruído.
-- O `ScoringPipeline` manteve `Available=True` durante todo o incidente —
-  correto, porque as réplicas estavam saudáveis; o problema era a
-  dependência, não o workload.
+- **Full automatic recovery, zero human intervention**: Strimzi recreated
+  the broker; consumers (franz-go) reconnected on their own; the operator
+  held steady during the blindness window instead of reacting to noise.
+- The `ScoringPipeline` stayed `Available=True` throughout the incident —
+  correct, because the replicas themselves were healthy; the problem was
+  the dependency, not the workload.
 
-## O que faltou / ações
+## What was missing / action items
 
-| Ação | Prioridade |
+| Action | Priority |
 |---|---|
-| Alerta `ZeedfaiLagMeasurementFailing`: operator sem conseguir medir lag por >2 min (nova métrica ou Event) | P1 |
-| Kafka multi-broker (a demo usa 1 broker ephemeral — em produção, ≥3 com `min.insync.replicas=2`) | P1 (documentado como limitação da demo) |
-| Condition dedicada `DependenciesHealthy` no ScoringPipeline, para distinguir "workload saudável" de "pipeline funcional ponta-a-ponta" | P2 |
-| Runbook para outage de broker (este documento serve de base) | P2 |
+| `ZeedfaiLagMeasurementFailing` alert: operator unable to measure lag for >2 min (new metric or Event) | P1 |
+| Multi-broker Kafka (the demo uses 1 ephemeral broker — in production, ≥3 with `min.insync.replicas=2`) | P1 (documented as a demo limitation) |
+| Dedicated `DependenciesHealthy` condition on `ScoringPipeline`, to distinguish "workload healthy" from "pipeline functional end-to-end" | P2 |
+| Runbook for broker outages (this document is the starting point) | P2 |
 
-## Lições
+## Lessons
 
-1. Fail-safe silencioso é meio caminho: o sistema comportou-se bem, mas um
-   humano de serviço não teria como saber que o autoscaler estava cego.
-   Observabilidade da própria malha de controlo é tão importante como a do
-   workload.
-2. `Available=True` durante um outage de dependência é tecnicamente correto
-   e operacionalmente enganador — as conditions devem separar os dois
-   conceitos.
+1. Silent fail-safe is only half the job: the system behaved well, but an
+   on-call human had no way to know the autoscaler was blind.
+   Observability of the control loop itself matters as much as
+   observability of the workload.
+2. `Available=True` during a dependency outage is technically correct and
+   operationally misleading — conditions should separate the two concepts.

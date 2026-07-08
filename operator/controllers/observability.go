@@ -16,9 +16,9 @@ import (
 	platformv1alpha1 "github.com/bastian/zeedfai/operator/api/v1alpha1"
 )
 
-// reconcileObservability garante ServiceMonitor, PrometheusRule (com
-// runbook_url) e PodDisruptionBudget para o pipeline. Requer o
-// prometheus-operator instalado no cluster (ex.: via kube-prometheus-stack).
+// reconcileObservability ensures a ServiceMonitor, PrometheusRule (with
+// runbook_url), and PodDisruptionBudget exist for the pipeline. Requires
+// prometheus-operator installed on the cluster (e.g. via kube-prometheus-stack).
 func (r *ScoringPipelineReconciler) reconcileObservability(ctx context.Context, sp *platformv1alpha1.ScoringPipeline, replicas int32) error {
 	log := ctrl.LoggerFrom(ctx)
 	labels := map[string]string{"app.kubernetes.io/name": "zeedfai-scorer", "zeedfai.io/pipeline": sp.Name}
@@ -30,8 +30,8 @@ func (r *ScoringPipelineReconciler) reconcileObservability(ctx context.Context, 
 		sm.Spec.Endpoints = []monitoringv1.Endpoint{{Port: "metrics", Interval: "15s"}}
 		return controllerutil.SetControllerReference(sp, sm, r.Scheme())
 	}); err != nil {
-		// Cluster sem prometheus-operator (ou envtest): degradar com aviso em
-		// vez de bloquear a gestão do pipeline por falta de monitoring.
+		// Cluster without prometheus-operator (or envtest): degrade gracefully
+		// instead of blocking pipeline management for lack of monitoring.
 		if isNoKindMatch(err) {
 			log.Info("monitoring CRDs not installed; skipping ServiceMonitor/PrometheusRule")
 			return r.reconcilePDB(ctx, sp, replicas)
@@ -102,8 +102,8 @@ func (r *ScoringPipelineReconciler) reconcilePDB(ctx context.Context, sp *platfo
 	return nil
 }
 
-// isNoKindMatch deteta "kind não registado na API server" mesmo se o erro
-// vier embrulhado (IsNoMatchError faz type assertion simples, sem Unwrap).
+// isNoKindMatch detects "kind not registered on the API server" even if the
+// error comes wrapped (IsNoMatchError does a plain type assertion, no Unwrap).
 func isNoKindMatch(err error) bool {
 	var noMatch *apimeta.NoKindMatchError
 	return errors.As(err, &noMatch)

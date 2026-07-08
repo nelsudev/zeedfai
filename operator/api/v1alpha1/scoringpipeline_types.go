@@ -1,4 +1,4 @@
-// Package v1alpha1 define a API ScoringPipeline do zeedfai.
+// Package v1alpha1 defines the zeedfai ScoringPipeline API.
 // +kubebuilder:object:generate=true
 // +groupName=platform.zeedfai.io
 package v1alpha1
@@ -16,16 +16,16 @@ var (
 )
 
 type ModelSpec struct {
-	// Imagem do serviço de scoring (consumidor Kafka).
+	// Image of the scoring service (Kafka consumer).
 	Image string `json:"image"`
-	// Nome de um Secret docker-registry no mesmo namespace, para pull de
-	// imagens privadas (ex.: GHCR). Opcional.
+	// Name of a docker-registry Secret in the same namespace, for pulling
+	// private images (e.g. GHCR). Optional.
 	// +optional
 	ImagePullSecret string `json:"imagePullSecret,omitempty"`
 }
 
 type KafkaSpec struct {
-	// Bootstrap servers, ex: "kafka:9092".
+	// Bootstrap servers, e.g. "kafka:9092".
 	Brokers string `json:"brokers"`
 	Topic   string `json:"topic"`
 	// +optional
@@ -33,7 +33,7 @@ type KafkaSpec struct {
 }
 
 type SLOSpec struct {
-	// Latência p99.9 máxima em milissegundos. Default 250 (o SLA de referência).
+	// Maximum p99.9 latency in milliseconds. Default 250 (the reference SLA).
 	// +kubebuilder:default=250
 	// +optional
 	LatencyP999Ms int32 `json:"latencyP999Ms,omitempty"`
@@ -48,33 +48,33 @@ type ScalingSpec struct {
 	// +kubebuilder:default=10
 	// +optional
 	MaxReplicas int32 `json:"maxReplicas,omitempty"`
-	// Lag alvo por réplica; acima disto o operator faz scale-out.
+	// Target lag per replica; above this the operator scales out.
 	// +kubebuilder:default=1000
 	// +optional
 	TargetLagPerReplica int64 `json:"targetLagPerReplica,omitempty"`
-	// Tempo mínimo entre decisões de scaling, para evitar flapping.
+	// Minimum time between scaling decisions, to avoid flapping.
 	// +kubebuilder:default=30
 	// +optional
 	CooldownSeconds int32 `json:"cooldownSeconds,omitempty"`
 }
 
 type CanarySpec struct {
-	// Ativa uma análise de canary para spec.canary.image.
+	// Enables a canary analysis for spec.canary.image.
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
-	// Imagem candidata a validar antes de se tornar spec.model.image.
+	// Candidate image to validate before it becomes spec.model.image.
 	// +optional
 	Image string `json:"image,omitempty"`
-	// % do total de réplicas atribuída ao canary (partilha o consumer group
-	// com o stable, por isso recebe essa fração do tráfego via rebalance).
+	// % of total replicas assigned to the canary (it shares the consumer
+	// group with stable, so it receives that fraction of traffic via rebalance).
 	// +kubebuilder:default=20
 	// +optional
 	StepPercent int32 `json:"stepPercent,omitempty"`
-	// Taxa de erro (%) acima da qual há rollback automático.
+	// Error rate (%) above which automatic rollback is triggered.
 	// +kubebuilder:default=5
 	// +optional
 	ErrorRateThresholdPct int32 `json:"errorRateThresholdPct,omitempty"`
-	// Janela de avaliação antes de marcar o canary como seguro para promoção.
+	// Evaluation window before marking the canary safe for promotion.
 	// +kubebuilder:default=120
 	// +optional
 	EvaluationSeconds int32 `json:"evaluationSeconds,omitempty"`
@@ -94,10 +94,10 @@ type ScoringPipelineSpec struct {
 type ScoringPipelineStatus struct {
 	// +optional
 	Replicas int32 `json:"replicas,omitempty"`
-	// Última decisão de scaling aplicada pelo autoscaler (consumer lag / SLO).
+	// Last scaling decision applied by the autoscaler (consumer lag / SLO).
 	// +optional
 	DesiredReplicas int32 `json:"desiredReplicas,omitempty"`
-	// Consumer lag observado na última avaliação.
+	// Consumer lag observed at the last evaluation.
 	// +optional
 	ConsumerLag int64 `json:"consumerLag,omitempty"`
 	// +optional

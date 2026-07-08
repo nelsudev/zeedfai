@@ -22,8 +22,9 @@ import (
 
 const runbookBaseURL = "https://github.com/nelsudev/zeedfai/blob/main/runbooks"
 
-// ScoringPipelineReconciler reconcilia ScoringPipelines: Deployment + Service
-// hoje; autoscaling por consumer lag e self-healing por SLO na Fase 4.
+// ScoringPipelineReconciler reconciles ScoringPipelines: Deployment +
+// Service, autoscaling by consumer lag, SLO self-healing, canary analysis,
+// and self-generated observability.
 type ScoringPipelineReconciler struct {
 	client.Client
 	Recorder record.EventRecorder
@@ -58,8 +59,8 @@ func (r *ScoringPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		group = "zeedfai-" + sp.Name
 	}
 
-	// Autoscaling por consumer lag, com self-healing por violação de SLO,
-	// sujeito a cooldown para evitar flapping em tráfego bursty.
+	// Autoscaling by consumer lag, with self-healing on SLO violation,
+	// subject to a cooldown to avoid flapping under bursty traffic.
 	replicas := minReplicas
 	if sp.Status.DesiredReplicas > 0 {
 		replicas = sp.Status.DesiredReplicas
@@ -137,8 +138,8 @@ func (r *ScoringPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: sp.Name + "-scorer", Namespace: sp.Namespace}}
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, svc, func() error {
-		// Labels no próprio Service: é por elas que o ServiceMonitor o
-		// seleciona (spec.selector do Service só seleciona pods).
+		// Labels on the Service itself: that's what the ServiceMonitor
+		// selects on (the Service's spec.selector only selects pods).
 		svc.Labels = map[string]string{"app.kubernetes.io/name": "zeedfai-scorer", "zeedfai.io/pipeline": sp.Name}
 		svc.Spec.Selector = map[string]string{"zeedfai.io/pipeline": sp.Name}
 		svc.Spec.Ports = []corev1.ServicePort{{Name: "metrics", Port: 8080}}
@@ -173,8 +174,8 @@ func (r *ScoringPipelineReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := r.Status().Update(ctx, &sp); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	// Requeue periódico: o autoscaler precisa de reavaliar o lag mesmo sem
-	// mudanças ao spec (ex.: durante um burst de tráfego).
+	// Periodic requeue: the autoscaler needs to re-evaluate lag even without
+	// spec changes (e.g. during a traffic burst).
 	return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 }
 

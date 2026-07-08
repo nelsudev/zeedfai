@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cria um VPS Contabo com cloud-init (k3s + flux).
+# Creates a Contabo VPS with cloud-init (k3s + flux).
 set -euo pipefail
 cd "$(dirname "$0")"
 TOKEN=$(./auth.sh)

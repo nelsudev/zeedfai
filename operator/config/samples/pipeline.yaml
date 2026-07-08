@@ -1,7 +1,7 @@
-# Sample para o fluxo de DEV local (make demo-up + make run + make deploy-sample).
-# Usa a imagem construída localmente e carregada no kind por `make images`
-# (zeedfai/scorer:dev) — sem GHCR, sem imagePullSecret. Para o fluxo GitOps,
-# ver gitops/infrastructure/demo/pipeline.yaml (imagens GHCR versionadas).
+# Sample for the local DEV loop (make demo-up + make run + make deploy-sample).
+# Uses the image built locally and loaded into kind by `make images`
+# (zeedfai/scorer:dev) — no GHCR, no imagePullSecret. For the GitOps flow,
+# see gitops/infrastructure/demo/pipeline.yaml (versioned GHCR images).
 apiVersion: platform.zeedfai.io/v1alpha1
 kind: ScoringPipeline
 metadata:

@@ -1,5 +1,5 @@
-// zeedfai scorer: consome transações do Kafka, aplica uma regra de scoring
-// e expõe métricas Prometheus. O SLO alvo é p99.9 < 250ms (ver docs/ADR-0001).
+// zeedfai scorer: consumes transactions from Kafka, applies a scoring rule,
+// and exposes Prometheus metrics. The target SLO is p99.9 < 250ms (see docs/ADR-0001).
 package main
 
 import (
@@ -21,8 +21,8 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// registry e métricas são criados em main(), rotulados com PIPELINE_NAME,
-// para que o PrometheusRule do operator os possa filtrar por pipeline.
+// registry and metrics are created in main(), labeled with PIPELINE_NAME,
+// so the operator's PrometheusRule can filter them per pipeline.
 var (
 	processed prometheus.Counter
 	flagged   prometheus.Counter
@@ -38,8 +38,8 @@ type Transaction struct {
 	Timestamp int64   `json:"ts"`
 }
 
-// score aplica a regra dummy: montante alto + país de risco = suspeito.
-// Numa fase posterior isto seria uma chamada a um modelo.
+// score applies the dummy rule: high amount + risky country = suspicious.
+// In a later phase this would be a call to a real model.
 func score(t Transaction) bool {
 	risky := map[string]bool{"XX": true, "ZZ": true}
 	return t.AmountEUR > 900 || (t.AmountEUR > 300 && risky[t.Country])
@@ -54,12 +54,12 @@ func main() {
 
 	reg := prometheus.WrapRegistererWith(prometheus.Labels{"pipeline": pipeline, "role": role}, prometheus.DefaultRegisterer)
 	factory := promauto.With(reg)
-	processed = factory.NewCounter(prometheus.CounterOpts{Name: "zeedfai_scorer_events_total", Help: "Eventos processados."})
-	flagged = factory.NewCounter(prometheus.CounterOpts{Name: "zeedfai_scorer_flagged_total", Help: "Eventos marcados como suspeitos."})
-	errors = factory.NewCounter(prometheus.CounterOpts{Name: "zeedfai_scorer_errors_total", Help: "Erros de processamento."})
+	processed = factory.NewCounter(prometheus.CounterOpts{Name: "zeedfai_scorer_events_total", Help: "Processed events."})
+	flagged = factory.NewCounter(prometheus.CounterOpts{Name: "zeedfai_scorer_flagged_total", Help: "Events flagged as suspicious."})
+	errors = factory.NewCounter(prometheus.CounterOpts{Name: "zeedfai_scorer_errors_total", Help: "Processing errors."})
 	latency = factory.NewHistogram(prometheus.HistogramOpts{
 		Name:    "zeedfai_scorer_latency_seconds",
-		Help:    "Latência de scoring por evento (SLO: p99.9 < 0.250s).",
+		Help:    "Scoring latency per event (SLO: p99.9 < 0.250s).",
 		Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5},
 	})
 

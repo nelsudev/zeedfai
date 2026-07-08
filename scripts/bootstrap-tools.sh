@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Instala a toolchain do zeedfai em ~/.local (sem sudo, exceto docker que deve existir).
+# Installs the zeedfai toolchain into ~/.local (no sudo, except docker, which must already exist).
 set -euo pipefail
 
 BIN="$HOME/.local/bin"
@@ -40,6 +40,6 @@ if ! command -v flux >/dev/null; then
 fi
 
 echo
-echo "Adiciona ao teu shell profile se ainda não tens:"
+echo "Add this to your shell profile if you haven't already:"
 echo '  export PATH="$HOME/.local/bin:$HOME/.local/go/bin:$PATH"'
 for t in go kind kubectl helm flux docker; do printf '%-8s %s\n' "$t" "$(command -v $t || echo MISSING)"; done

@@ -1,23 +1,24 @@
-# Runbook: SLO de latência p99.9 violado
+# Runbook: p99.9 latency SLO violated
 
-**Alerta:** `ZeedfaiSLOLatencyViolated` — p99.9 acima do limite (default 250 ms) por >5 min.
+**Alert:** `ZeedfaiSLOLatencyViolated` — p99.9 above the configured limit (default 250 ms) for >5 min.
 
-## Impacto
-Scoring fora do SLA de referência da indústria (Feedzai Railgun: <250ms p99.9);
-risco de decisões de fraude a atrasar o fluxo de pagamento.
+## Impact
+Scoring is outside the industry reference SLA (Feedzai's Railgun: <250ms
+p99.9); risk of fraud decisions delaying the payment flow.
 
-## Diagnóstico
-1. `kubectl get scoringpipeline <nome> -o yaml` — ver `status.conditions` e réplicas atuais vs. `spec.scaling.maxReplicas`.
-2. Grafana: painel de latência p99.9 vs. throughput vs. consumer lag no mesmo eixo temporal.
-3. Causas comuns:
-   - Burst de tráfego mais rápido do que o autoscaler consegue reagir (ver `targetLagPerReplica` e cooldown).
-   - Nó/pod com throttling de CPU — `kubectl top pods`.
-   - Kafka broker sob pressão (só 1 broker na demo local — sem HA).
+## Diagnosis
+1. `kubectl get scoringpipeline <name> -o yaml` — check `status.conditions` and current replicas vs. `spec.scaling.maxReplicas`.
+2. Grafana: latency p99.9 vs. throughput vs. consumer lag panel, same time axis.
+3. Common causes:
+   - Traffic burst faster than the autoscaler can react (check `targetLagPerReplica` and cooldown).
+   - CPU throttling on a node/pod — `kubectl top pods`.
+   - Kafka broker under pressure (only 1 broker in the local demo — no HA).
 
-## Mitigação
-- Curto prazo: `kubectl scale deploy <nome>-scorer --replicas=N` manual enquanto se investiga.
-- Se recorrente: rever `spec.scaling` do CRD via PR no repo GitOps (min/max/targetLag).
+## Mitigation
+- Short term: `kubectl scale deploy <name>-scorer --replicas=N` manually while investigating.
+- If recurring: revise the CRD's `spec.scaling` via a PR in the GitOps repo (min/max/targetLag).
 
-## Pós-incidente
-Registar em `docs/postmortems/`; se a causa for capacidade insuficiente, avaliar
-subir `maxReplicas` ou adicionar nodes (ver Hetzner node-autoscaler, Fase 7).
+## Post-incident
+Log it under `docs/postmortems/`; if the cause was insufficient capacity,
+consider raising `maxReplicas` or adding nodes (see the Hetzner
+node-autoscaler, cloud phase).

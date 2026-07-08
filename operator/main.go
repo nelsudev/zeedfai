@@ -30,8 +30,8 @@ func main() {
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: ":8083"},
 		HealthProbeBindAddress: ":8082",
-		// Leader election só faz sentido in-cluster; em dev local (make run)
-		// fica desligada por omissão.
+		// Leader election only makes sense in-cluster; in local dev (make run)
+		// it's off by default.
 		LeaderElection:   os.Getenv("ENABLE_LEADER_ELECTION") == "true",
 		LeaderElectionID: "zeedfai-operator",
 	})

@@ -1,4 +1,4 @@
-# Kafka single-node (KRaft) via Strimzi 1.x (API v1) — só para demo local.
+# Kafka single-node (KRaft) via Strimzi 1.x (API v1) — local demo only.
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaNodePool
 metadata:

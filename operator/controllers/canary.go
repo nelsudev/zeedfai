@@ -21,25 +21,25 @@ import (
 	platformv1alpha1 "github.com/bastian/zeedfai/operator/api/v1alpha1"
 )
 
-// reconcileCanary gere um Deployment secundário que corre a imagem candidata
-// e partilha o consumer group com o stable — o Kafka distribui partições
-// entre todos os membros do grupo, pelo que o canary recebe naturalmente
-// uma fração do tráfego proporcional ao seu nº de réplicas.
+// reconcileCanary manages a secondary Deployment that runs the candidate
+// image and shares the consumer group with stable — Kafka distributes
+// partitions across all members of the group, so the canary naturally
+// receives a fraction of traffic proportional to its replica count.
 //
-// Decisão de desenho: o rollback é automático (o lado arriscado); a
-// promoção não é — fica como recomendação via status/Event, para não haver
-// conflito com o GitOps (o operator nunca escreve de volta spec.model.image;
-// isso é uma mudança de Git, auditável).
+// Design decision: rollback is automatic (the risky side); promotion is
+// not — it's left as a status/Event recommendation, to avoid conflicting
+// with GitOps (the operator never writes spec.model.image back; that's an
+// auditable Git change).
 func (r *ScoringPipelineReconciler) reconcileCanary(ctx context.Context, sp *platformv1alpha1.ScoringPipeline, group string, stableReplicas int32) error {
 	log := ctrl.LoggerFrom(ctx)
 	canaryName := sp.Name + "-scorer-canary"
 
 	active := sp.Spec.Canary.Enabled && sp.Spec.Canary.Image != "" && sp.Spec.Canary.Image != sp.Spec.Model.Image
 
-	// Guard anti-loop: se este mesmo spec (mesma Generation) já sofreu
-	// rollback, não recriar o canary — senão o ciclo criar→falhar→rollback
-	// repetir-se-ia para sempre. Qualquer alteração ao spec (nova imagem,
-	// desativar o canary) incrementa a Generation e limpa o guard.
+	// Anti-loop guard: if this same spec (same Generation) already had a
+	// rollback, don't recreate the canary — otherwise the create→fail→rollback
+	// cycle would repeat forever. Any spec change (new image, disabling the
+	// canary) bumps the Generation and clears the guard.
 	if cond := meta.FindStatusCondition(sp.Status.Conditions, "CanaryHealthy"); active &&
 		cond != nil && cond.Reason == "RolledBack" && cond.ObservedGeneration == sp.Generation {
 		active = false
@@ -85,7 +85,7 @@ func (r *ScoringPipelineReconciler) reconcileCanary(ctx context.Context, sp *pla
 			Env: []corev1.EnvVar{
 				{Name: "KAFKA_BROKERS", Value: sp.Spec.Kafka.Brokers},
 				{Name: "KAFKA_TOPIC", Value: sp.Spec.Kafka.Topic},
-				{Name: "KAFKA_GROUP", Value: group}, // mesmo grupo do stable: partilha o tráfego
+				{Name: "KAFKA_GROUP", Value: group}, // same group as stable: shares the traffic
 				{Name: "PIPELINE_NAME", Value: sp.Name},
 				{Name: "ROLE", Value: "canary"},
 			},
@@ -129,11 +129,11 @@ func (r *ScoringPipelineReconciler) reconcileCanary(ctx context.Context, sp *pla
 	return nil
 }
 
-// canaryErrorRatePct consulta o Prometheus: % de eventos com erro nos
-// últimos 2 minutos, para os pods com role=canary do pipeline.
+// canaryErrorRatePct queries Prometheus: % of events with an error over the
+// last 2 minutes, for the pipeline's role=canary pods.
 func canaryErrorRatePct(ctx context.Context, pipeline string) (float64, bool) {
-	// Denominador = eventos processados + errados, porque um evento que erra
-	// não incrementa events_total — senão a percentagem podia exceder 100%.
+	// Denominator = processed + errored events, because an event that errors
+	// doesn't increment events_total — otherwise the percentage could exceed 100%.
 	q := fmt.Sprintf(`100 * sum(rate(zeedfai_scorer_errors_total{pipeline=%q,role="canary"}[2m])) / clamp_min(sum(rate(zeedfai_scorer_events_total{pipeline=%q,role="canary"}[2m])) + sum(rate(zeedfai_scorer_errors_total{pipeline=%q,role="canary"}[2m])), 0.001)`, pipeline, pipeline, pipeline)
 	u := fmt.Sprintf("%s/api/v1/query?query=%s", strings.TrimRight(prometheusURL, "/"), url.QueryEscape(q))
 

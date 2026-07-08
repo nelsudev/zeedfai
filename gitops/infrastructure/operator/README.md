@@ -1,11 +1,11 @@
-# Operator — imagem privada no GHCR
+# Operator — private image on GHCR
 
-As imagens `ghcr.io/nelsudev/zeedfai-{operator,scorer,loadgen}` ficam privadas
-por omissão (GHCR não faz `container:write` de visibilidade via OAuth App
-token do `gh`). O Deployment do operator e os Deployments `scorer` gerados
-pelo controller usam `imagePullSecrets: [ghcr-pull]`.
+The `ghcr.io/nelsudev/zeedfai-{operator,scorer,loadgen,platform-api}` images
+are private by default (GHCR won't flip visibility via the `gh` CLI's OAuth
+App token). The operator Deployment and the `scorer` Deployments generated
+by the controller use `imagePullSecrets: [ghcr-pull]`.
 
-O secret **não é comitado** (é um token). Cria-o em cada cluster:
+The secret is **not committed** (it's a token). Create it in each cluster:
 
 ```bash
 kubectl create namespace zeedfai-system --dry-run=client -o yaml | kubectl apply -f -
@@ -22,5 +22,5 @@ kubectl create secret docker-registry ghcr-pull \
   -n default --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Em produção isto seria gerido por SOPS/Sealed Secrets/External Secrets — fora
-de escopo para esta demo pessoal.
+In production this would be managed via SOPS/Sealed Secrets/External
+Secrets — out of scope for this personal demo.

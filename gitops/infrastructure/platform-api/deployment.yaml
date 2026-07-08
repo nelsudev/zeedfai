@@ -4,8 +4,8 @@ metadata:
   name: platform-api
   namespace: zeedfai-system
 ---
-# Leitura apenas: a API é uma fachada read-only sobre os pipelines; escritas
-# de configuração acontecem via Git (GitOps), nunca por aqui.
+# Read-only: the API is a read-only facade over the pipelines; configuration
+# writes happen via Git (GitOps), never through here.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

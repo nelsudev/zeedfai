@@ -1,10 +1,10 @@
-// zeedfai platform-api: fachada de operações/DX sobre os ScoringPipelines.
+// zeedfai platform-api: an operations/DX facade over the ScoringPipelines.
 //
-// Read-only sobre o cluster (lista pipelines, proxy de métricas Prometheus)
-// mais o disparo de bursts no loadgen (ferramenta de teste, não configuração).
-// Escritas de configuração NÃO passam por aqui — o caminho é um commit no
-// repo GitOps (ver docs/ARCHITECTURE.md); um POST /pipelines que abrisse um
-// PR seria a extensão natural, documentada mas fora de escopo desta fase.
+// Read-only over the cluster (lists pipelines, proxies Prometheus metrics)
+// plus triggering bursts on the loadgen (a test tool, not configuration).
+// Configuration writes do NOT go through here — the path is a commit to the
+// GitOps repo (see docs/ARCHITECTURE.md); a POST /pipelines that opened a
+// PR would be the natural extension, documented but out of scope for now.
 package main
 
 import (
@@ -41,7 +41,7 @@ var (
 func main() {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
-		// fora do cluster (dev): usa o kubeconfig
+		// out of cluster (dev): use the kubeconfig
 		cfg, err = clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
 		if err != nil {
 			log.Fatalf("kubeconfig: %v", err)
@@ -97,8 +97,8 @@ func main() {
 		writeJSON(w, out)
 	})
 
-	// Proxy de range-queries ao Prometheus para os gráficos da GUI.
-	// Só queries pré-definidas — nunca PromQL arbitrário vindo do browser.
+	// Proxy of range-queries to Prometheus for the GUI's charts.
+	// Only pre-defined queries — never arbitrary PromQL from the browser.
 	mux.HandleFunc("GET /api/pipelines/{name}/metrics", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		queries := map[string]string{
@@ -158,7 +158,7 @@ func main() {
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
 
-	// GUI (ficheiros embebidos no binário — sem dependências externas)
+	// GUI (files embedded in the binary — no external dependencies)
 	staticFS, err := fs.Sub(static, "static")
 	if err != nil {
 		log.Fatal(err)

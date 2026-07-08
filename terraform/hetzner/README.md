@@ -1,40 +1,41 @@
-# zeedfai na Hetzner Cloud (Fase 7)
+# zeedfai on Hetzner Cloud (cloud phase)
 
-Cluster k3s com billing à hora para demonstrar **escala de máquinas** real —
-o que a Contabo (billing mensal) não consegue fazer com honestidade económica.
+An hourly-billed k3s cluster to demonstrate real **machine scaling** — which
+Contabo (monthly billing) can't do with any economic honesty.
 
-## Pré-requisitos
+## Prerequisites
 
-- Conta Hetzner Cloud + token API (project → Security → API tokens, Read & Write)
+- Hetzner Cloud account + API token (project → Security → API tokens, Read & Write)
 - `terraform` ≥ 1.6
 
-## Subir
+## Bring up
 
 ```bash
 cd terraform/hetzner
 export TF_VAR_hcloud_token=<token>
 export TF_VAR_ssh_public_key="$(cat ~/.ssh/id_ed25519.pub)"
 terraform init && terraform apply
-# seguir o output "next_steps"
+# follow the "next_steps" output
 ```
 
-Custo: 2× cx22 ≈ €0.012/h — uma tarde de demo custa cêntimos.
+Cost: 2× cx22 ≈ €0.012/h — an afternoon of demo costs cents.
 
-## Escala de nodes (cluster-autoscaler)
+## Node scaling (cluster-autoscaler)
 
-O [cluster-autoscaler oficial tem provider Hetzner](https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler/cloudprovider/hetzner):
-instala-se com o token e uma node-group spec (`HCLOUD_CLUSTER_CONFIG`), e
-quando pods ficam `Pending` por falta de capacidade cria servers novos em
-~1 min, apagando-os quando sobra capacidade. Combinado com o autoscaler de
-pods do zeedfai-operator, dá a demo completa: burst → mais réplicas → sem
-capacidade → mais **nodes** → burst acaba → menos réplicas → menos nodes.
+The [official cluster-autoscaler has a Hetzner provider](https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler/cloudprovider/hetzner):
+install it with the token and a node-group spec (`HCLOUD_CLUSTER_CONFIG`),
+and when pods go `Pending` for lack of capacity it creates new servers in
+~1 min, deleting them once capacity is freed up. Combined with the
+zeedfai-operator's pod autoscaler, this gives the full demo: burst → more
+replicas → no capacity → more **nodes** → burst ends → fewer replicas →
+fewer nodes.
 
-## Desligar (importante)
+## Tear down (important)
 
 ```bash
 terraform destroy
 ```
 
-Rede de segurança: todos os servers têm a label `zeedfai=true`, e a GitHub
-Action `teardown-cloud-demo.yml` apaga qualquer server com essa label todas
-as noites às 03:00 UTC (secret `HCLOUD_TOKEN` no repo).
+Safety net: every server carries the `zeedfai=true` label, and the
+`teardown-cloud-demo.yml` GitHub Action deletes any server with that label
+every night at 03:00 UTC (repo secret `HCLOUD_TOKEN`).

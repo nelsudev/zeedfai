@@ -1,423 +1,432 @@
-# zeedfai — arquitetura e guia do repositório
+# zeedfai — architecture and repo guide
 
-Este documento explica **o que cada peça faz e porquê**, para quem chega ao
-repo pela primeira vez (incluindo o próprio autor, três meses depois). Está
-organizado por camada: domínio (Go), API Kubernetes, GitOps (Flux),
-CI/CD, e scripts auxiliares.
+This document explains **what every piece does and why**, for anyone
+arriving at the repo for the first time (including the author himself,
+three months later). It's organized by layer: domain (Go), Kubernetes API,
+GitOps (Flux), CI/CD, and helper scripts.
 
-Estado: Fases 0–6 completas e verificadas ao vivo num cluster kind (o teste
-da Fase 5 encontrou e corrigiu dois bugs de observabilidade — ver secção
-"Observabilidade: as duas armadilhas"). Falta a Fase 7 (cloud/Hetzner). Ver
-`README.md` para o checklist atualizado.
-
----
-
-## 1. O problema que o projeto simula
-
-Um serviço de *fraud-scoring* consome transações de um tópico Kafka e decide,
-por evento, se é suspeito. O SLA de referência da indústria (documentado no
-paper do Railgun da Feedzai) é **scoring com latência p99.9 < 250ms**. O
-projeto não implementa deteção de fraude a sério — a "regra" no `scorer` é
-propositadamente trivial — porque o que está a ser demonstrado é a
-**plataforma que opera esse serviço**: como ele escala, se autocura, é
-entregue e observado.
+Status: Phases 0–6 complete and verified live on a kind cluster (the Phase 5
+test found and fixed two observability bugs — see the "Observability: the
+two traps" section). Phase 7 (cloud/Hetzner) is still pending. See
+`README.md` for the up-to-date checklist.
 
 ---
 
-## 2. Componentes Go
+## 1. The problem the project simulates
+
+A *fraud-scoring* service consumes transactions from a Kafka topic and
+decides, per event, whether it's suspicious. The industry reference SLA
+(documented in Feedzai's Railgun paper) is **scoring with p99.9 latency <
+250ms**. The project doesn't implement real fraud detection — the "rule" in
+`scorer` is deliberately trivial — because what's being demonstrated is the
+**platform that operates that service**: how it scales, self-heals, is
+delivered, and is observed.
+
+---
+
+## 2. Go components
 
 ### 2.1 `scorer/main.go`
 
-O serviço de negócio. Um binário Go pequeno e sem dependências além do
-cliente Kafka e do cliente Prometheus.
+The business service. A small Go binary with no dependencies beyond the
+Kafka client and the Prometheus client.
 
-- **O que faz:** liga-se ao Kafka como consumidor de um `consumerGroup`,
-  lê transações JSON do tópico `transactions`, aplica `score()` (regra
-  dummy: montante alto ou montante médio + país de risco → suspeito),
-  incrementa contadores/histograma Prometheus, expõe tudo em `/metrics`.
-- **Variáveis de ambiente** (todas injetadas pelo operator, nunca à mão):
-  - `KAFKA_BROKERS`, `KAFKA_TOPIC`, `KAFKA_GROUP` — ligação ao Kafka.
-  - `PIPELINE_NAME` — usado como label Prometheus `pipeline`, para que as
-    `PrometheusRule` geradas pelo operator consigam filtrar alertas por
-    pipeline individual (múltiplos `ScoringPipeline` no mesmo cluster não
-    se confundem nas métricas).
-  - `ROLE` (`stable` ou `canary`, default `stable`) — label Prometheus
-    `role`, usado pela análise de canary (secção 4) para comparar a taxa de
-    erro do candidato contra o baseline.
-  - `FAULT_RATE` (float, default `0`) — só existe para **testar o rollback
-    automático de canary**: se > 0, essa fração dos eventos é
-    deliberadamente contada como erro e descartada. Nunca se define em
-    produção; serve para construir uma imagem "candidata má" a propósito
-    (ver `scorer/Dockerfile`, `ARG FAULT_RATE`).
-- **Métricas expostas** (todas com labels `pipeline` e `role`):
-  - `zeedfai_scorer_events_total` — eventos processados.
-  - `zeedfai_scorer_flagged_total` — eventos marcados como suspeitos.
-  - `zeedfai_scorer_errors_total` — falhas de parsing/fault injetado.
-  - `zeedfai_scorer_latency_seconds` — histograma da latência de scoring;
-    é sobre este que o `PrometheusRule` calcula o p99.9 do SLO.
-- **Porquê um registry "wrapped"** (`prometheus.WrapRegistererWith`) em vez
-  de `promauto.NewCounter` direto: as métricas só podem ser criadas depois
-  de saber `PIPELINE_NAME`/`ROLE` (lidos do ambiente em `main()`), por isso
-  o registo acontece dentro de `main()`, não em `var (...)` a nível de
-  pacote como seria o padrão mais simples.
+- **What it does:** connects to Kafka as a consumer in a `consumerGroup`,
+  reads JSON transactions from the `transactions` topic, applies `score()`
+  (dummy rule: high amount, or medium amount + risky country → suspicious),
+  increments Prometheus counters/histogram, exposes everything on
+  `/metrics`.
+- **Environment variables** (all injected by the operator, never by hand):
+  - `KAFKA_BROKERS`, `KAFKA_TOPIC`, `KAFKA_GROUP` — Kafka connection.
+  - `PIPELINE_NAME` — used as the Prometheus label `pipeline`, so the
+    `PrometheusRule`s generated by the operator can filter alerts per
+    individual pipeline (multiple `ScoringPipeline`s on the same cluster
+    don't get mixed up in the metrics).
+  - `ROLE` (`stable` or `canary`, default `stable`) — Prometheus label
+    `role`, used by the canary analysis (section 4) to compare the
+    candidate's error rate against the baseline.
+  - `FAULT_RATE` (float, default `0`) — exists only to **test automatic
+    canary rollback**: if > 0, that fraction of events is deliberately
+    counted as an error and dropped. Never set in production; it's used to
+    deliberately build a "bad candidate" image (see `scorer/Dockerfile`,
+    `ARG FAULT_RATE`).
+- **Exposed metrics** (all with `pipeline` and `role` labels):
+  - `zeedfai_scorer_events_total` — processed events.
+  - `zeedfai_scorer_flagged_total` — events flagged as suspicious.
+  - `zeedfai_scorer_errors_total` — parsing failures / injected faults.
+  - `zeedfai_scorer_latency_seconds` — scoring latency histogram; this is
+    what the `PrometheusRule` uses to compute the SLO's p99.9.
+- **Why a "wrapped" registry** (`prometheus.WrapRegistererWith`) instead of
+  `promauto.NewCounter` directly: the metrics can only be created once
+  `PIPELINE_NAME`/`ROLE` are known (read from the environment in `main()`),
+  so registration happens inside `main()`, not in a package-level
+  `var (...)` block as the simpler pattern would have it.
 
 ### 2.2 `loadgen/main.go`
 
-Gerador de tráfego sintético — não faz parte do "produto", é ferramenta de
-teste, mas corre em cluster tal como o scorer para poder ser controlado
-remotamente durante uma demo.
+Synthetic traffic generator — not part of the "product", it's a test tool,
+but it runs in-cluster just like the scorer so it can be remotely
+controlled during a demo.
 
-- **O que faz:** produz transações aleatórias (cartão, montante, país,
-  timestamp) para o tópico Kafka a uma taxa configurável (`BASE_RATE`,
-  eventos/segundo).
-- **`POST /burst?rate=N&seconds=S`:** o mecanismo central das demos deste
-  projeto. Sobe a taxa de produção para `N` ev/s durante `S` segundos e
-  depois volta sozinho ao `BASE_RATE` (via `time.AfterFunc`). É isto que o
-  botão "🔥 Burst" da GUI (Fase 6) vai chamar, e foi usado manualmente
-  (via `kubectl port-forward` + `curl`) para provar o autoscaler em ação:
-  ver `README.md`, secção GitOps, para os números reais observados
-  (lag 6350 → 10 réplicas → drenagem → 2 réplicas).
+- **What it does:** produces random transactions (card, amount, country,
+  timestamp) to the Kafka topic at a configurable rate (`BASE_RATE`,
+  events/second).
+- **`POST /burst?rate=N&seconds=S`:** the central mechanism of this
+  project's demos. Raises the production rate to `N` ev/s for `S` seconds
+  and then returns to `BASE_RATE` on its own (via `time.AfterFunc`). This is
+  what the "🔥 Burst" button in the GUI (Phase 6) calls, and it was used
+  manually (via `kubectl port-forward` + `curl`) to prove the autoscaler in
+  action: see `README.md`, GitOps section, for the real observed numbers
+  (lag 6350 → 10 replicas → drain → 2 replicas).
 
-### 2.3 `operator/` — o Kubernetes Operator
+### 2.3 `operator/` — the Kubernetes Operator
 
-Construído com [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime)
-(o mesmo framework do kubebuilder), sem scaffolding completo do kubebuilder
-CLI — os ficheiros foram escritos à mão para manter o repo pequeno e legível.
+Built with [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime)
+(the same framework kubebuilder uses), without the full kubebuilder CLI
+scaffolding — the files were written by hand to keep the repo small and
+readable.
 
 #### `operator/api/v1alpha1/scoringpipeline_types.go`
 
-Define o CRD `ScoringPipeline` (grupo `platform.zeedfai.io`). Cada campo:
+Defines the `ScoringPipeline` CRD (group `platform.zeedfai.io`). Each field:
 
-- `spec.model.image` — imagem do scorer **estável** (a que recebe a maioria
-  do tráfego).
-- `spec.model.imagePullSecret` — nome de um `Secret` docker-registry no
-  mesmo namespace, para imagens privadas (GHCR). Opcional; vazio = imagem
-  pública, sem pull secret.
-- `spec.kafka.{brokers,topic,consumerGroup}` — ligação Kafka; se
-  `consumerGroup` ficar vazio, o controller gera `zeedfai-<nome-do-pipeline>`.
-- `spec.slo.latencyP999Ms` (default 250) — o número que dispara o alerta
-  `ZeedfaiSLOLatencyViolated` e a self-healing (força scale-out).
+- `spec.model.image` — image of the **stable** scorer (the one receiving
+  most of the traffic).
+- `spec.model.imagePullSecret` — name of a docker-registry `Secret` in the
+  same namespace, for private images (GHCR). Optional; empty = public
+  image, no pull secret.
+- `spec.kafka.{brokers,topic,consumerGroup}` — Kafka connection; if
+  `consumerGroup` is left empty, the controller generates
+  `zeedfai-<pipeline-name>`.
+- `spec.slo.latencyP999Ms` (default 250) — the number that triggers the
+  `ZeedfaiSLOLatencyViolated` alert and self-healing (forces scale-out).
 - `spec.scaling.{minReplicas,maxReplicas,targetLagPerReplica,cooldownSeconds}`
-  — parâmetros do autoscaler (secção 3).
+  — autoscaler parameters (section 3).
 - `spec.canary.{enabled,image,stepPercent,errorRateThresholdPct,evaluationSeconds}`
-  — parâmetros da análise de canary (secção 4).
+  — canary analysis parameters (section 4).
 - `status.{replicas,desiredReplicas,consumerLag,lastScaleTime,canaryStartedAt,conditions}`
-  — tudo o que o controller escreve de volta; nunca editado por humanos.
-  `desiredReplicas`/`consumerLag` aparecem como colunas no `kubectl get`
-  (`+kubebuilder:printcolumn`) para inspeção rápida sem `-o yaml`.
+  — everything the controller writes back; never edited by humans.
+  `desiredReplicas`/`consumerLag` show up as columns in `kubectl get`
+  (`+kubebuilder:printcolumn`) for quick inspection without `-o yaml`.
 
-`zz_generated.deepcopy.go` é gerado por `controller-gen` (`make generate`) —
-nunca editar à mão, é sobrescrito a cada `make generate`.
+`zz_generated.deepcopy.go` is generated by `controller-gen`
+(`make generate`) — never edit it by hand, it's overwritten on every
+`make generate`.
 
 #### `operator/controllers/scoringpipeline_controller.go`
 
-O reconciler principal — chamado sempre que um `ScoringPipeline` muda, e
-também periodicamente (`RequeueAfter: 15s`, ver mais abaixo) para reavaliar
-o autoscaler mesmo sem mudanças ao spec. Fluxo, por ordem:
+The main reconciler — called whenever a `ScoringPipeline` changes, and also
+periodically (`RequeueAfter: 15s`, see below) to re-evaluate the autoscaler
+even without spec changes. Flow, in order:
 
-1. Calcula `minReplicas`/`maxReplicas` (com defaults defensivos: mínimo 1,
-   máximo nunca menor que o mínimo).
-2. Chama `consumerLag()` (secção 3) e decide `replicas` (autoscaler +
-   self-healing por SLO).
-3. `controllerutil.CreateOrUpdate` no `Deployment` do scorer — injeta as
-   env vars (`KAFKA_*`, `PIPELINE_NAME`, `ROLE=stable`), a
-   `ReadinessProbe` em `/healthz`, e o `ImagePullSecrets` se aplicável.
-   `SetControllerReference` faz o Deployment ser *owned* pelo
-   `ScoringPipeline` — apagar o CR apaga tudo em cascata; e o `Owns()` no
-   `SetupWithManager` faz o controller reagir também a mudanças diretas no
-   Deployment (ex.: alguém apaga-o à mão → reconcile repõe-no, é o
-   "self-healing básico" testado no README).
-4. Cria/atualiza o `Service` (porta `metrics`, para o `ServiceMonitor`).
-5. `reconcileObservability()` (secção "Observabilidade").
-6. `reconcileCanary()` (secção 4).
-7. Lê o `Deployment` real para saber `ReadyReplicas`, define a condition
-   `Available` (`True` só quando réplicas prontas ≥ decididas).
-8. `Status().Update()` — só o subrecurso de status, nunca o spec (separação
-   spec/status é a convenção Kubernetes: humanos/GitOps escrevem spec,
-   controllers escrevem status).
-9. Devolve `RequeueAfter: 15 * time.Second` — **não** `ctrl.Result{}` vazio.
-   Isto é deliberado: sem isto, o controller só reconciliaria quando o
-   `ScoringPipeline` ou o `Deployment` mudassem, e nunca reagiria sozinho a
-   uma subida de consumer lag (que não é um evento Kubernetes, é um número
-   dentro do Kafka). O requeue periódico é o que torna o autoscaler
-   "vivo" mesmo em repouso.
+1. Computes `minReplicas`/`maxReplicas` (with defensive defaults: minimum
+   1, maximum never lower than the minimum).
+2. Calls `consumerLag()` (section 3) and decides `replicas` (autoscaler +
+   SLO self-healing).
+3. `controllerutil.CreateOrUpdate` on the scorer's `Deployment` — injects
+   the env vars (`KAFKA_*`, `PIPELINE_NAME`, `ROLE=stable`), the
+   `ReadinessProbe` on `/healthz`, and `ImagePullSecrets` if applicable.
+   `SetControllerReference` makes the Deployment *owned* by the
+   `ScoringPipeline` — deleting the CR cascades the deletion; and `Owns()`
+   in `SetupWithManager` makes the controller also react to direct changes
+   to the Deployment (e.g. someone deletes it by hand → reconcile restores
+   it, this is the "basic self-healing" tested in the README).
+4. Creates/updates the `Service` (port `metrics`, for the `ServiceMonitor`).
+5. `reconcileObservability()` (see the "Observability" section).
+6. `reconcileCanary()` (section 4).
+7. Reads the real `Deployment` to know `ReadyReplicas`, sets the
+   `Available` condition (`True` only when ready replicas ≥ decided
+   replicas).
+8. `Status().Update()` — only the status subresource, never the spec
+   (spec/status separation is the Kubernetes convention: humans/GitOps
+   write spec, controllers write status).
+9. Returns `RequeueAfter: 15 * time.Second` — **not** an empty
+   `ctrl.Result{}`. This is deliberate: without it, the controller would
+   only reconcile when the `ScoringPipeline` or the `Deployment` changed,
+   and would never react on its own to a rising consumer lag (which isn't
+   a Kubernetes event, it's a number inside Kafka). The periodic requeue is
+   what keeps the autoscaler "alive" even at rest.
 
-`SetupWithManager` regista `Owns(&appsv1.Deployment{})` e
-`Owns(&corev1.Service{})` — o controller-runtime usa isto para saber que
-mudanças nesses recursos (feitas por qualquer ator, não só por ele) devem
-disparar um novo reconcile do `ScoringPipeline` dono.
+`SetupWithManager` registers `Owns(&appsv1.Deployment{})` and
+`Owns(&corev1.Service{})` — controller-runtime uses this to know that
+changes to those resources (made by any actor, not just by it) should
+trigger a new reconcile of the owning `ScoringPipeline`.
 
 #### `operator/controllers/autoscale.go`
 
-Toda a lógica de decisão de escala, isolada do reconciler principal para
-poder ser lida (e um dia testada) independentemente.
+All the scaling-decision logic, isolated from the main reconciler so it can
+be read (and one day tested) independently.
 
-- `consumerLag(ctx, brokers, group, topic)` — abre um cliente Kafka efémero
-  (`kgo.NewClient` + `kadm.NewClient`, a API de admin do
-  [franz-go](https://github.com/twmb/franz-go)), busca os offsets
-  *committed* do grupo (`FetchOffsets`) e os offsets de fim de partição
-  (`ListEndOffsets`), soma `end - committed` por partição. Fecha o cliente
-  no fim (`defer cl.Close()`) — criar um cliente por reconcile tem
-  overhead, mas é aceitável ao número de pipelines que este projeto tem em
-  mente (dezenas, não milhares); documentado como trade-off consciente, não
-  descoberto tarde.
-- `desiredReplicasFromLag(lag, targetLagPerReplica, min, max)` — divisão
-  inteira **arredondada para cima** (`(lag + target - 1) / target`), para
-  que qualquer lag > 0 acima do último múltiplo justifique mais uma
-  réplica, depois recorta ao intervalo `[min, max]`.
-- `sloLatencyViolated(ctx, pipeline, maxMs)` — faz uma query HTTP direta ao
-  Prometheus (`histogram_quantile(0.999, ...)`) em vez de usar um cliente
-  Prometheus completo — decisão deliberada de manter zero dependências
-  extra para uma única query simples. Devolve `false` em qualquer erro
-  (Prometheus em baixo, sem dados, JSON inesperado) — **fail-open**: uma
-  falha de observabilidade não deve por si só disparar scale-out
-  desnecessário; o pior cenário é o autoscaler ficar cego temporariamente
-  ao SLO, não que ele reaja a ruído.
-- `cooldownElapsed(last *time.Time, cooldown)` — `true` se `last == nil`
-  (nunca escalou) ou se já passou tempo suficiente. Usado tanto para
-  scale-out como scale-down, para não oscilar em tráfego bursty (ver o
-  teste ao vivo no README: 10→7→3→2 réplicas em passos, não de um salto).
+- `consumerLag(ctx, brokers, group, topic)` — opens an ephemeral Kafka
+  client (`kgo.NewClient` + `kadm.NewClient`, the admin API of
+  [franz-go](https://github.com/twmb/franz-go)), fetches the group's
+  *committed* offsets (`FetchOffsets`) and the partition end offsets
+  (`ListEndOffsets`), sums `end - committed` per partition. Closes the
+  client at the end (`defer cl.Close()`) — creating a client per reconcile
+  has overhead, but it's acceptable at the number of pipelines this project
+  has in mind (dozens, not thousands); documented as a conscious trade-off,
+  not discovered late.
+- `desiredReplicasFromLag(lag, targetLagPerReplica, min, max)` — integer
+  division **rounded up** (`(lag + target - 1) / target`), so that any lag
+  > 0 above the last multiple justifies one more replica, then clamps to
+  the `[min, max]` range.
+- `sloLatencyViolated(ctx, pipeline, maxMs)` — makes a direct HTTP query to
+  Prometheus (`histogram_quantile(0.999, ...)`) instead of using a full
+  Prometheus client — a deliberate decision to keep zero extra dependencies
+  for a single simple query. Returns `false` on any error (Prometheus down,
+  no data, unexpected JSON) — **fail-open**: an observability failure
+  shouldn't by itself trigger unnecessary scale-out; the worst case is the
+  autoscaler being temporarily blind to the SLO, not reacting to noise.
+- `cooldownElapsed(last *time.Time, cooldown)` — `true` if `last == nil`
+  (never scaled) or if enough time has already passed. Used for both
+  scale-out and scale-down, to avoid oscillating under bursty traffic (see
+  the live test in the README: 10→7→3→2 replicas in steps, not in one
+  jump).
 
-**Onde isto se liga ao reconciler:** a decisão de `replicas` combina três
-fontes, por esta ordem de precedência — (1) o último `desiredReplicas`
-persistido em `status` (para não perder o estado entre reconciles), (2) o
-cálculo por lag, (3) o forçar de +1 se o SLO estiver violado — e só se
-aplica de facto se o `cooldown` já tiver passado.
+**Where this connects to the reconciler:** the `replicas` decision combines
+three sources, in this order of precedence — (1) the last `desiredReplicas`
+persisted in `status` (so state isn't lost between reconciles), (2) the
+lag-based calculation, (3) forcing +1 if the SLO is violated — and it's
+only actually applied if the `cooldown` has already elapsed.
 
 #### `operator/controllers/canary.go`
 
-A Fase 5. Ver secção 4 abaixo — desenho explicado em detalhe porque a
-decisão de arquitetura (rollback automático, promoção manual) não é óbvia
-e merece justificação própria.
+Phase 5. See section 4 below — the design is explained in detail because
+the architecture decision (automatic rollback, manual promotion) isn't
+obvious and deserves its own justification.
 
 #### `operator/controllers/observability.go`
 
-Gera, por `ScoringPipeline`, três recursos que dependem do
+Generates, per `ScoringPipeline`, three resources that depend on
 [prometheus-operator](https://github.com/prometheus-operator/prometheus-operator)
-estar instalado no cluster (por isso `make demo-up` instala sempre o
-`kube-prometheus-stack` — deixou de ser opcional):
+being installed on the cluster (which is why `make demo-up` always installs
+`kube-prometheus-stack` — it's no longer optional):
 
-- `ServiceMonitor` — diz ao Prometheus para fazer scrape ao `Service` do
-  scorer (porta `metrics`, intervalo 15s).
-- `PrometheusRule` — dois alertas:
-  - `ZeedfaiSLOLatencyViolated`: p99.9 > `spec.slo.latencyP999Ms` por 5min.
-  - `ZeedfaiConsumerLagGrowing`: `deriv(lag) > 0` por 5min (lag a crescer
-    de forma sustentada, não um pico momentâneo).
-  Ambos os alertas têm anotação `runbook_url` a apontar para
-  `runbooks/*.md` — a convenção de que todo o alerta tem um runbook
-  correspondente é deliberada (é o que a vaga da Feedzai pede
-  explicitamente: "develop playbooks, runbooks, alerting").
-- `PodDisruptionBudget` — `minAvailable = replicas - 1`, para que
-  operações de manutenção do cluster (drain de nodes, upgrades) nunca
-  tirem todas as réplicas ao mesmo tempo.
+- `ServiceMonitor` — tells Prometheus to scrape the scorer's `Service`
+  (port `metrics`, 15s interval).
+- `PrometheusRule` — two alerts:
+  - `ZeedfaiSLOLatencyViolated`: p99.9 > `spec.slo.latencyP999Ms` for 5min.
+  - `ZeedfaiConsumerLagGrowing`: `deriv(lag) > 0` for 5min (lag growing in a
+    sustained way, not a momentary spike).
+  Both alerts carry a `runbook_url` annotation pointing at
+  `runbooks/*.md` — the convention that every alert has a matching runbook
+  is deliberate (it's what the Feedzai job explicitly asks for: "develop
+  playbooks, runbooks, alerting").
+- `PodDisruptionBudget` — `minAvailable = replicas - 1`, so that cluster
+  maintenance operations (node drains, upgrades) never take out all
+  replicas at once.
 
 #### `operator/controllers/metrics.go`
 
-Três gauges Prometheus que o **próprio operator** expõe (não o scorer):
-`zeedfai_operator_{consumer_lag,desired_replicas,ready_replicas}`, com
-label `pipeline`. Existem porque o `consumerLag` calculado em
-`autoscale.go` só vive em `status.consumerLag` (um valor pontual, sem
-histórico) — expor como métrica Prometheus dá-lhe uma série temporal, que é
-o que a GUI da Fase 6 vai desenhar num gráfico lag-vs-réplicas-vs-tempo.
+Three Prometheus gauges that the **operator itself** exposes (not the
+scorer): `zeedfai_operator_{consumer_lag,desired_replicas,ready_replicas}`,
+with a `pipeline` label. They exist because the `consumerLag` computed in
+`autoscale.go` only lives in `status.consumerLag` (a point-in-time value,
+no history) — exposing it as a Prometheus metric gives it a time series,
+which is what the Phase 6 GUI draws in a lag-vs-replicas-vs-time chart.
 
-Detalhe que custou um bug: têm de ser registadas no
+A detail that cost a bug: they have to be registered on
 `sigs.k8s.io/controller-runtime/pkg/metrics.Registry` (via
-`promauto.With(...)`), porque o metrics server do manager em `:8083` serve
-**esse** registry — o `prometheus.DefaultRegisterer` do client_golang não é
-servido pelo controller-runtime, e métricas registadas lá simplesmente
-nunca apareceriam no scrape.
+`promauto.With(...)`), because the manager's metrics server on `:8083`
+serves **that** registry — client_golang's `prometheus.DefaultRegisterer`
+isn't served by controller-runtime, and metrics registered there would
+simply never show up in the scrape.
 
 #### `operator/controllers/util.go`
 
-Uma função (`intstrFromInt`) para converter `int` em `intstr.IntOrString`
-— tão pequena que só existe como ficheiro próprio para não poluir o
-controller principal com um import só para isto.
+A single function (`intstrFromInt`) to convert `int` to
+`intstr.IntOrString` — small enough that it only exists as its own file so
+as not to pollute the main controller with an import just for this.
 
 #### `operator/main.go`
 
-O `main()` do binário: monta o `Scheme` (regista os tipos do
-`ScoringPipeline`, do `client-go` standard, e também `monitoringv1`/
-`policyv1` — sem isto o client do controller-runtime não sabe serializar
-`ServiceMonitor`/`PodDisruptionBudget`), configura o manager
-(`HealthProbeBindAddress :8082`, `Metrics :8083` — portas nãostandard
-porque em dev local, fora do cluster, a `:8080` por vezes já está ocupada
-por outro processo do utilizador), liga o `ScoringPipelineReconciler`, e
-arranca.
+The binary's `main()`: assembles the `Scheme` (registers the
+`ScoringPipeline` types, the standard `client-go` types, and also
+`monitoringv1`/`policyv1` — without this the controller-runtime client
+can't serialize `ServiceMonitor`/`PodDisruptionBudget`), configures the
+manager (`HealthProbeBindAddress :8082`, `Metrics :8083` — non-standard
+ports because in local dev, out-of-cluster, `:8080` is sometimes already
+taken by another process on the user's machine), wires up the
+`ScoringPipelineReconciler`, and starts.
 
-- `ENABLE_LEADER_ELECTION` (env, default `false`): fora do cluster
-  (`make run`, dev loop) não faz sentido fazer leader election (só há uma
-  instância, e pedir uma `Lease` a um cluster onde não se corre é inútil);
-  dentro do cluster (`gitops/infrastructure/operator/deployment.yaml`)
-  fica `true`, para o dia em que se aumentar `replicas` do operator para
-  alta disponibilidade (só uma réplica reconcilia de cada vez, as outras
-  ficam em standby).
-
----
-
-## 3. Autoscaler — resumo do fluxo (para quem só quer a versão curta)
-
-```
-a cada reconcile (ou a cada 15s por requeue):
-  lag = soma do lag de todas as partições do consumer group  (via Kafka admin)
-  desired = ceil(lag / targetLagPerReplica), recortado a [min, max]
-  se p99.9 > SLO: desired += 1 (self-healing, ainda recortado a max)
-  se desired != réplicas_atuais E já passou o cooldown:
-    aplica desired, regista o timestamp da decisão
-  senão:
-    mantém a última decisão (não flapa)
-```
-
-Verificado ao vivo (ver README): burst de 3000 ev/s → lag sobe a 6350 →
-scale-out 2→10 → lag drena → scale-down em passos 10→7→3→2, nunca de
-repente, por causa do cooldown de 30s.
+- `ENABLE_LEADER_ELECTION` (env, default `false`): out-of-cluster
+  (`make run`, dev loop) leader election makes no sense (there's only one
+  instance, and asking for a `Lease` on a cluster where it's not running is
+  useless); inside the cluster
+  (`gitops/infrastructure/operator/deployment.yaml`) it's `true`, for the
+  day the operator's `replicas` get bumped for high availability (only one
+  replica reconciles at a time, the others stand by).
 
 ---
 
-## 4. Canary — desenho e porquê (Fase 5)
+## 3. Autoscaler — flow summary (for those who just want the short version)
 
-**O problema que isto resolve:** publicar uma nova versão do scorer sem
-arriscar que uma imagem defeituosa processe 100% do tráfego de fraude antes
-de alguém dar por isso.
+```
+on every reconcile (or every 15s via requeue):
+  lag = sum of lag across all consumer group partitions  (via Kafka admin)
+  desired = ceil(lag / targetLagPerReplica), clamped to [min, max]
+  if p99.9 > SLO: desired += 1 (self-healing, still clamped to max)
+  if desired != current_replicas AND cooldown has elapsed:
+    apply desired, record the decision timestamp
+  else:
+    keep the last decision (no flapping)
+```
 
-**A decisão de arquitetura mais importante deste componente:** o rollback
-é automático, a promoção não é. Explicação:
+Verified live (see README): a 3000 ev/s burst → lag rises to 6350 →
+scale-out 2→10 → lag drains → scale-down in steps 10→7→3→2, never abruptly,
+because of the 30s cooldown.
 
-- Se o operator também escrevesse `spec.model.image` sozinho para promover
-  um canary saudável, isso entraria em conflito direto com o GitOps: o
-  Flux tem o repo Git como fonte de verdade e reverteria essa escrita na
-  próxima reconciliação, criando um "flip-flop" entre o que o operator
-  quer e o que o Git diz. Escrever de volta ao spec a partir do controller
-  quebra a garantia central do GitOps (o cluster é sempre um reflexo do
-  Git, nunca o contrário).
-- Por isso, quando o canary sobrevive à janela de avaliação sem exceder o
-  threshold de erro, o operator **não** promove sozinho — marca a
-  condition `CanaryHealthy=True` com a mensagem "safe to promote via a Git
-  commit", e é um humano (ou um pipeline de CI) que faz o commit a mudar
-  `spec.model.image` para a imagem candidata. Auditável, reversível, sem
-  surpresas.
-- Já o rollback é o lado onde a automação vale mais e o risco de agir
-  sozinho é menor: parar de mandar tráfego para uma imagem que está a
-  falhar é uma ação segura e reversível (o stable nunca deixou de correr),
-  e esperar por um humano custaria minutos ou horas de fraude mal
-  detetada. Por isso é imediato e automático.
+---
 
-**Como o canary recebe tráfego sem service mesh:** o Deployment canary usa
-o **mesmo `KAFKA_GROUP`** que o stable. O protocolo de consumer group do
-Kafka reparte as partições do tópico entre todos os processos que se juntam
-ao grupo — logo, ao juntar N réplicas canary a um grupo que já tinha M
-réplicas stable, o Kafka automaticamente dá ao canary uma fração das
-partições (e portanto do tráfego) proporcional ao seu peso no grupo. Não é
-preciso Istio/Linkerd nem um proxy de tráfego: o particionamento do Kafka
-*é* o mecanismo de split.
+## 4. Canary — design and why (Phase 5)
 
-**`spec.canary` campo a campo:**
-- `enabled` + `image`: só há canary ativo se `enabled=true` **e**
-  `image` diferente de `spec.model.image` (evita um canary "da mesma
-  imagem", que não testaria nada).
-- `stepPercent` (default 20): réplicas do canary = `ceil(réplicas_stable *
-  stepPercent / 100)`, mínimo 1.
-- `errorRateThresholdPct` (default 5): acima disto, rollback imediato.
-- `evaluationSeconds` (default 120): tempo mínimo a correr sem violar o
-  threshold antes de a condition passar a `CanaryHealthy=True`.
+**The problem this solves:** publishing a new scorer version without
+risking a defective image processing 100% of the fraud traffic before
+anyone notices.
 
-**Guard anti-loop (importante):** depois de um rollback, o spec continua
-com `canary.enabled=true` e a mesma imagem — sem proteção, o próximo
-reconcile recriaria o canary mau, que voltaria a falhar, num ciclo
-infinito de criar→falhar→rollback. Por isso o rollback grava a condition
-`CanaryHealthy=False/RolledBack` com `observedGeneration` igual à
-Generation atual do spec, e o controller recusa-se a recriar o canary
-enquanto a Generation não mudar. Qualquer edição ao spec (imagem nova,
-`enabled: false`) incrementa a Generation e limpa o guard naturalmente.
+**The most important architecture decision of this component:** rollback
+is automatic, promotion isn't. Explanation:
 
-**Trade-off fail-open da análise:** tal como no SLO check do autoscaler,
-se o Prometheus estiver indisponível a `canaryErrorRatePct` devolve
-"sem dados" e o canary continua a correr sem ser avaliado — uma falha de
-observabilidade não dispara rollbacks espúrios, mas também significa que
-um canary mau pode sobreviver mais tempo se o Prometheus cair ao mesmo
-tempo. Aceitável para esta demo; em produção juntar-se-ia um guard de
-"sem dados durante X minutos → rollback por precaução".
+- If the operator also wrote `spec.model.image` by itself to promote a
+  healthy canary, that would directly conflict with GitOps: Flux treats the
+  Git repo as the source of truth and would revert that write on the next
+  reconciliation, creating a "flip-flop" between what the operator wants
+  and what Git says. Writing back to the spec from the controller breaks
+  GitOps's core guarantee (the cluster is always a reflection of Git, never
+  the other way around).
+- So, when the canary survives the evaluation window without exceeding the
+  error threshold, the operator does **not** promote it by itself — it sets
+  the `CanaryHealthy=True` condition with the message "safe to promote via
+  a Git commit", and it's a human (or a CI pipeline) who commits the change
+  to `spec.model.image` to the candidate image. Auditable, reversible, no
+  surprises.
+- Rollback, on the other hand, is where automation pays off most and the
+  risk of acting alone is lowest: stopping traffic to an image that's
+  failing is a safe, reversible action (stable never stopped running), and
+  waiting for a human would cost minutes or hours of poorly-detected fraud.
+  That's why it's immediate and automatic.
 
-**Query Prometheus usada para a taxa de erro do canary**
-(`canaryErrorRatePct` em `canary.go`):
+**How the canary receives traffic without a service mesh:** the canary
+Deployment uses the **same `KAFKA_GROUP`** as stable. Kafka's consumer
+group protocol splits the topic's partitions across all processes that
+join the group — so when N canary replicas join a group that already had M
+stable replicas, Kafka automatically gives the canary a fraction of the
+partitions (and therefore of the traffic) proportional to its weight in the
+group. No Istio/Linkerd or traffic proxy needed: Kafka's partitioning *is*
+the split mechanism.
+
+**`spec.canary` field by field:**
+- `enabled` + `image`: the canary is only active if `enabled=true` **and**
+  `image` differs from `spec.model.image` (avoids a canary "of the same
+  image", which wouldn't test anything).
+- `stepPercent` (default 20): canary replicas = `ceil(stable_replicas *
+  stepPercent / 100)`, minimum 1.
+- `errorRateThresholdPct` (default 5): above this, immediate rollback.
+- `evaluationSeconds` (default 120): minimum time running without violating
+  the threshold before the condition flips to `CanaryHealthy=True`.
+
+**Anti-loop guard (important):** after a rollback, the spec still has
+`canary.enabled=true` and the same image — without protection, the next
+reconcile would recreate the bad canary, which would fail again, in an
+infinite create→fail→rollback cycle. So the rollback records the
+`CanaryHealthy=False/RolledBack` condition with `observedGeneration` equal
+to the spec's current Generation, and the controller refuses to recreate
+the canary until the Generation changes. Any edit to the spec (new image,
+`enabled: false`) bumps the Generation and naturally clears the guard.
+
+**Fail-open trade-off of the analysis:** just like the autoscaler's SLO
+check, if Prometheus is unavailable `canaryErrorRatePct` returns "no data"
+and the canary keeps running unevaluated — an observability failure
+doesn't trigger spurious rollbacks, but it also means a bad canary can
+survive longer if Prometheus goes down at the same time. Acceptable for
+this demo; production would add a "no data for X minutes → roll back as a
+precaution" guard.
+
+**Prometheus query used for the canary's error rate**
+(`canaryErrorRatePct` in `canary.go`):
 
 ```promql
 100 * sum(rate(zeedfai_scorer_errors_total{pipeline="X",role="canary"}[2m]))
     / clamp_min(sum(rate(zeedfai_scorer_events_total{pipeline="X",role="canary"}[2m])), 1)
 ```
 
-O `clamp_min(..., 1)` evita divisão por zero quando o canary ainda não
-processou nenhum evento (denominador zero) — nesse caso a taxa de erro
-resultante seria calculada sobre `1` em vez de `0`, ou seja, mantém-se
-artificialmente baixa em vez de indefinida, o que é o comportamento
-correto: "sem dados ainda" não deve ser tratado como "está a falhar".
+The `clamp_min(..., 1)` avoids division by zero when the canary hasn't
+processed any events yet (zero denominator) — in that case the resulting
+error rate would be computed over `1` instead of `0`, i.e. it stays
+artificially low instead of undefined, which is the correct behavior: "no
+data yet" shouldn't be treated as "is failing".
 
-**Como testar isto localmente (não fizemos ainda ao vivo neste repo — é o
-próximo passo pendente):**
-1. Build de uma imagem "candidata má":
+**How to test this locally (not yet done live in this repo — it's the
+pending next step):**
+1. Build a "bad candidate" image:
    `docker build --build-arg FAULT_RATE=0.5 -t ghcr.io/nelsudev/zeedfai-scorer:bad-canary scorer/`
 2. `kubectl patch scoringpipeline card-payments-eu --type merge -p '{"spec":{"canary":{"enabled":true,"image":"ghcr.io/nelsudev/zeedfai-scorer:bad-canary"}}}'`
-   — atenção: este pipeline é gerido pelo Flux (`infra-demo`), portanto o
-   patch é revertido na próxima sync (~30 min). Para um teste rápido serve;
-   o caminho "correto" é editar `gitops/infrastructure/demo/pipeline.yaml`
-   e commitar, que é exatamente como se faria em produção.
-3. Observar: `<pipeline>-scorer-canary` Deployment aparece, e em minutos o
-   Event `CanaryRolledBack` e a condition `CanaryHealthy=False` aparecem, e
-   o Deployment canary desaparece sozinho.
+   — heads up: this pipeline is Flux-managed (`infra-demo`), so the patch
+   gets reverted on the next sync (~30 min). Fine for a quick test; the
+   "correct" path is to edit
+   `gitops/infrastructure/demo/pipeline.yaml` and commit, exactly as you'd
+   do in production.
+3. Observe: the `<pipeline>-scorer-canary` Deployment appears, and within
+   minutes the `CanaryRolledBack` Event and the `CanaryHealthy=False`
+   condition appear, and the canary Deployment disappears on its own.
 
 ---
 
-## 4b. platform-api + GUI (Fase 6) — `platform-api/`
+## 4b. platform-api + GUI (Phase 6) — `platform-api/`
 
-Fachada de operações/DX no estilo "mini control plane interno". Decisões:
+An operations/DX facade in the style of a "mini internal control plane".
+Decisions:
 
-- **Read-only sobre o cluster, por desenho.** `GET /api/pipelines` lista os
-  `ScoringPipeline` via dynamic client (RBAC só com get/list/watch);
-  escritas de configuração continuam a ser exclusivas do Git — um
-  `POST /pipelines` que abrisse um PR no repo GitOps é a extensão natural,
-  documentada mas fora de escopo. A exceção pragmática é `POST /api/burst`,
-  que fala com o loadgen: é ferramenta de teste, não configuração.
-- **`GET /api/pipelines/{name}/metrics`** faz proxy de **range-queries
-  pré-definidas** ao Prometheus (lag, réplicas prontas, p99.9 em ms,
-  throughput; últimos 30 min, step 15s). Nunca aceita PromQL vindo do
-  browser — o proxy existe justamente para não expor o Prometheus.
-- **GUI embebida no binário** (`go:embed`, um único `index.html` sem
-  dependências externas): tabela de pipelines com estado/canary, quatro
-  gráficos SVG de **série única** (um eixo por gráfico — nunca dual-axis),
-  linha de SLO a 250 ms no gráfico de latência, crosshair+tooltip no hover,
-  dark mode via `prefers-color-scheme`, e o botão "🔥 Burst".
-- As séries de lag/réplicas vêm das gauges `zeedfai_operator_*` (não do
-  scorer) — por isso existe o Service+ServiceMonitor do próprio operator em
-  `gitops/infrastructure/operator/metrics.yaml`.
+- **Read-only over the cluster, by design.** `GET /api/pipelines` lists the
+  `ScoringPipeline`s via a dynamic client (RBAC with only
+  get/list/watch); configuration writes remain exclusive to Git — a
+  `POST /pipelines` that opened a PR against the GitOps repo is the natural
+  extension, documented but out of scope. The pragmatic exception is
+  `POST /api/burst`, which talks to the loadgen: that's a test tool, not
+  configuration.
+- **`GET /api/pipelines/{name}/metrics`** proxies **predefined range
+  queries** to Prometheus (lag, ready replicas, p99.9 in ms, throughput;
+  last 30 min, 15s step). It never accepts PromQL coming from the browser —
+  the proxy exists precisely so Prometheus itself is never exposed.
+- **GUI embedded in the binary** (`go:embed`, a single `index.html` with no
+  external dependencies): a pipeline table with status/canary state, four
+  **single-series** SVG charts (one axis per chart — never dual-axis), a
+  250 ms SLO line on the latency chart, hover crosshair+tooltip, dark mode
+  via `prefers-color-scheme`, and the "🔥 Burst" button.
+- The lag/replicas series come from the `zeedfai_operator_*` gauges (not
+  from the scorer) — which is why the operator's own Service+ServiceMonitor
+  exists in `gitops/infrastructure/operator/metrics.yaml`.
 
-Aceder: `kubectl -n zeedfai-system port-forward svc/platform-api 8090:8090`
+Access: `kubectl -n zeedfai-system port-forward svc/platform-api 8090:8090`
 → http://localhost:8090.
 
-## 4c. Observabilidade: as duas armadilhas que o teste ao vivo apanhou
+## 4c. Observability: the two traps the live test caught
 
-Registadas aqui porque são o tipo de falha silenciosa que só aparece em
-execução — build, vet e até a demo do autoscaler passavam sem elas:
+Recorded here because they're the kind of silent failure that only shows
+up at runtime — build, vet, and even the autoscaler demo passed without
+them:
 
-1. **O kube-prometheus-stack não seleciona ServiceMonitors de terceiros por
-   default** — só os que têm o label `release=monitoring`. Resultado: zero
-   séries `zeedfai_*` no Prometheus, e como o SLO check e a análise de
-   canary "falham aberto", tudo parecia verde — um canary com 50% de erros
-   passou a avaliação. Fix: `*SelectorNilUsesHelmValues: false` nos values
-   do HelmRelease. Moral: fail-open em observabilidade exige um teste que
-   prove que os dados fluem.
-2. **ServiceMonitor seleciona Services por label, não por spec.selector.**
-   O controller criava o Service sem labels no metadata (só com o selector
-   de pods) — match impossível. Fix: labels no próprio Service.
+1. **kube-prometheus-stack doesn't select third-party ServiceMonitors by
+   default** — only the ones labeled `release=monitoring`. Result: zero
+   `zeedfai_*` series in Prometheus, and since the SLO check and the canary
+   analysis "fail open", everything looked green — a canary with a 50%
+   error rate passed the evaluation. Fix: `*SelectorNilUsesHelmValues: false`
+   in the HelmRelease values. Moral: fail-open observability requires a
+   test that proves the data actually flows.
+2. **ServiceMonitor selects Services by label, not by spec.selector.** The
+   controller was creating the Service without metadata labels (only the
+   pod selector) — impossible to match. Fix: labels on the Service itself.
 
 ---
 
 ## 5. GitOps (Flux) — `gitops/`
 
-### 5.1 Porque a estrutura está dividida assim
+### 5.1 Why the structure is split this way
 
 ```
 gitops/
-├── clusters/staging/          # o que o "flux bootstrap" aponta
-│   ├── flux-system/           # gerado pelo flux bootstrap, não editar à mão
+├── clusters/staging/          # what "flux bootstrap" points to
+│   ├── flux-system/           # generated by flux bootstrap, don't hand-edit
 │   ├── sources.yaml           # Kustomization -> infrastructure/sources
 │   ├── infra-crds.yaml        # Kustomization -> infrastructure/crds
 │   ├── infra-strimzi.yaml     # Kustomization -> infrastructure/strimzi
@@ -425,26 +434,26 @@ gitops/
 │   ├── infra-monitoring.yaml
 │   ├── infra-operator.yaml
 │   └── infra-demo.yaml
-└── infrastructure/            # o conteúdo real (HelmReleases, CRDs, etc.)
+└── infrastructure/            # the actual content (HelmReleases, CRDs, etc.)
     ├── sources/                (HelmRepository: strimzi, prometheus-community)
-    ├── crds/                   (o CRD ScoringPipeline)
-    ├── strimzi/                (HelmRelease do operador Strimzi)
-    ├── kafka-cluster/          (os CRs Kafka/KafkaNodePool/KafkaTopic)
-    ├── monitoring/             (HelmRelease kube-prometheus-stack)
-    ├── operator/               (Deployment do zeedfai-operator + RBAC)
-    └── demo/                   (loadgen + o ScoringPipeline de exemplo)
+    ├── crds/                   (the ScoringPipeline CRD)
+    ├── strimzi/                (HelmRelease for the Strimzi operator)
+    ├── kafka-cluster/          (the Kafka/KafkaNodePool/KafkaTopic CRs)
+    ├── monitoring/             (kube-prometheus-stack HelmRelease)
+    ├── operator/               (the zeedfai-operator Deployment + RBAC)
+    └── demo/                   (loadgen + the example ScoringPipeline)
 ```
 
-Cada `clusters/staging/infra-*.yaml` é um objeto `Kustomization` do Flux
-(`kustomize.toolkit.fluxcd.io/v1`) — não confundir com um
-`kustomization.yaml` do Kustomize puro (que também existe, um por pasta em
-`infrastructure/`, para o Flux saber quais ficheiros aplicar). A separação
-entre "o que aponta" (`clusters/`) e "o que é apontado"
-(`infrastructure/`) é a convenção standard de repos Flux multi-cluster:
-`clusters/staging` e um futuro `clusters/prod` podem reutilizar as mesmas
-pastas em `infrastructure/` com overlays diferentes.
+Each `clusters/staging/infra-*.yaml` is a Flux `Kustomization` object
+(`kustomize.toolkit.fluxcd.io/v1`) — not to be confused with a plain
+Kustomize `kustomization.yaml` (which also exists, one per folder under
+`infrastructure/`, so Flux knows which files to apply). The separation
+between "what points" (`clusters/`) and "what is pointed at"
+(`infrastructure/`) is the standard convention for multi-cluster Flux
+repos: `clusters/staging` and a future `clusters/prod` can reuse the same
+`infrastructure/` folders with different overlays.
 
-### 5.2 A cadeia de dependências (`dependsOn`)
+### 5.2 The dependency chain (`dependsOn`)
 
 ```
 infra-sources ─┬─> infra-crds ─────────> infra-operator ─┐
@@ -453,52 +462,51 @@ infra-sources ─┬─> infra-crds ─────────> infra-operator 
                └─> infra-monitoring
 ```
 
-Porquê esta ordem, explicitamente:
-- **`infra-crds` antes de `infra-operator`**: o Deployment do operator só
-  faz sentido depois de o CRD `ScoringPipeline` existir (senão o operator
-  arranca e falha a fazer `watch` num tipo que a API server não conhece).
-- **`infra-strimzi` antes de `infra-kafka-cluster`**: os CRs `Kafka`/
-  `KafkaNodePool`/`KafkaTopic` só são reconhecidos pela API server depois
-  de o Helm chart do Strimzi instalar os seus CRDs. Sem este `dependsOn`,
-  a primeira aplicação falharia com "no matches for kind Kafka" — só
-  resolveria eventualmente pelas retries do kustomize-controller, mas de
-  forma não determinística. Isto foi de facto observado durante o
-  desenvolvimento (ver histórico de commits) antes de se separar
-  `strimzi/` (o operador) de `kafka-cluster/` (os CRs) em duas
-  Kustomizations distintas.
-- **`infra-operator` E `infra-kafka-cluster` antes de `infra-demo`**: o
-  `ScoringPipeline` de exemplo em `demo/` precisa do operator já a correr
-  (para ser reconciliado) e do Kafka já a existir (para o scorer conseguir
-  ligar-se).
-- **`infra-monitoring` é independente** — só depende de `infra-sources`
-  (o `HelmRepository` do prometheus-community), corre em paralelo com o
-  ramo do Strimzi.
+Why this order, explicitly:
+- **`infra-crds` before `infra-operator`**: the operator Deployment only
+  makes sense once the `ScoringPipeline` CRD exists (otherwise the operator
+  starts and fails to `watch` a type the API server doesn't know about).
+- **`infra-strimzi` before `infra-kafka-cluster`**: the `Kafka`/
+  `KafkaNodePool`/`KafkaTopic` CRs are only recognized by the API server
+  after the Strimzi Helm chart installs its CRDs. Without this
+  `dependsOn`, the first apply would fail with "no matches for kind Kafka"
+  — it would only eventually resolve via the kustomize-controller's
+  retries, but non-deterministically. This was in fact observed during
+  development (see commit history) before `strimzi/` (the operator) was
+  split from `kafka-cluster/` (the CRs) into two separate Kustomizations.
+- **Both `infra-operator` and `infra-kafka-cluster` before `infra-demo`**:
+  the example `ScoringPipeline` in `demo/` needs the operator already
+  running (to be reconciled) and Kafka already existing (for the scorer to
+  be able to connect).
+- **`infra-monitoring` is independent** — it only depends on
+  `infra-sources` (the prometheus-community `HelmRepository`), and runs in
+  parallel with the Strimzi branch.
 
 ### 5.3 `gitops/infrastructure/operator/`
 
-- `namespace.yaml` — `zeedfai-system`, separado do `default` (onde correm
-  os scorers) para isolar RBAC e recursos administrativos dos workloads.
-- `rbac.yaml` — `ServiceAccount` + `ClusterRoleBinding` para o
-  `ClusterRole` gerado.
-- `clusterrole.yaml` — **gerado automaticamente** por `make generate` a
-  partir dos comentários `+kubebuilder:rbac:...` espalhados pelo código do
-  controller (ver `scoringpipeline_controller.go`). Nunca editar à mão —
-  editar os markers no Go e correr `make generate`, que já sincroniza a
-  cópia aqui.
-- `deployment.yaml` — o operator a correr in-cluster, imagem GHCR,
-  `imagePullSecrets: [ghcr-pull]` (ver `README.md` do mesmo diretório para
-  como criar esse secret — não é comitado, teria de conter um token).
-- `README.md` — explica exatamente isto: porque as imagens ficaram
-  privadas (a API de mudança de visibilidade do GHCR devolveu 404 com o
-  token OAuth do `gh` CLI) e como recriar o secret de pull.
+- `namespace.yaml` — `zeedfai-system`, separate from `default` (where the
+  scorers run) to isolate RBAC and administrative resources from workloads.
+- `rbac.yaml` — `ServiceAccount` + `ClusterRoleBinding` for the generated
+  `ClusterRole`.
+- `clusterrole.yaml` — **auto-generated** by `make generate` from the
+  `+kubebuilder:rbac:...` comments scattered through the controller code
+  (see `scoringpipeline_controller.go`). Never edit by hand — edit the
+  markers in Go and run `make generate`, which already syncs the copy here.
+- `deployment.yaml` — the operator running in-cluster, GHCR image,
+  `imagePullSecrets: [ghcr-pull]` (see the `README.md` in the same
+  directory for how to create that secret — it isn't committed, it would
+  have to contain a token).
+- `README.md` — explains exactly this: why the images ended up private
+  (GHCR's visibility-change API returned 404 with the `gh` CLI's OAuth
+  token) and how to recreate the pull secret.
 
 ### 5.4 `gitops/infrastructure/demo/`
 
-O `ScoringPipeline` de exemplo (`pipeline.yaml`) e o `loadgen` (imagem
-GHCR). Existe como pasta própria, separada de `operator/`, porque
-semanticamente é "carga de demonstração", não infraestrutura — um cluster
-de produção teria os seus próprios `ScoringPipeline`s reais aqui, geridos
-por outra equipa/repo, não pelo mesmo Kustomization que instala o Kafka.
+The example `ScoringPipeline` (`pipeline.yaml`) and the `loadgen` (GHCR
+image). It exists as its own folder, separate from `operator/`, because
+semantically it's "demo load", not infrastructure — a production cluster
+would have its own real `ScoringPipeline`s here, managed by a different
+team/repo, not by the same Kustomization that installs Kafka.
 
 ---
 
@@ -506,68 +514,68 @@ por outra equipa/repo, não pelo mesmo Kustomization que instala o Kafka.
 
 ### 6.1 `ci.yml`
 
-Corre em cada push a `main` e em cada PR:
-- `build-test`: `go build`, `go vet`, `go test` para os três módulos Go
-  (`operator`, `scorer`, `loadgen` — três `go.mod` independentes,
-  deliberadamente não um workspace único, para poderem ser versionados e
-  publicados de forma independente).
-- `docker-build`: builda as três imagens (sem push) só para apanhar erros
-  de Dockerfile antes de se tentar publicar a sério.
+Runs on every push to `main` and on every PR:
+- `build-test`: `go build`, `go vet`, `go test` for the three Go modules
+  (`operator`, `scorer`, `loadgen` — three independent `go.mod`s,
+  deliberately not a single workspace, so they can be versioned and
+  published independently).
+- `docker-build`: builds the three images (no push) just to catch
+  Dockerfile errors before actually trying to publish.
 
 ### 6.2 `teardown-cloud-demo.yml`
 
-A rede de segurança de custo pedida explicitamente: corre manualmente
-(botão "Run workflow" no GitHub) e também todas as noites às 03:00 UTC.
-Chama `scripts/teardown-cloud.sh`, que:
-- Lista instâncias Contabo cujo `displayName` comece por `zeedfai` e
-  cancela-as.
-- Lista servers Hetzner com a label `zeedfai=true` e apaga-os.
-- Se os secrets de um provider (`CNTB_*` ou `HCLOUD_TOKEN`) não estiverem
-  configurados no repo, esse provider é simplesmente ignorado — o
-  workflow nunca falha por falta de credenciais, porque o objetivo é ser
-  uma rede de segurança sempre presente, não mais um passo manual a
-  esquecer.
+The explicitly-requested cost safety net: runs manually (the "Run
+workflow" button on GitHub) and also every night at 03:00 UTC. Calls
+`scripts/teardown-cloud.sh`, which:
+- Lists Contabo instances whose `displayName` starts with `zeedfai` and
+  cancels them.
+- Lists Hetzner servers with the `zeedfai=true` label and deletes them.
+- If a provider's secrets (`CNTB_*` or `HCLOUD_TOKEN`) aren't configured in
+  the repo, that provider is simply skipped — the workflow never fails for
+  lack of credentials, because the goal is to be an always-present safety
+  net, not one more manual step to forget.
 
-Neste momento (Fase 7 ainda não feita) isto não apaga nada de facto, porque
-ainda não há nenhuma VM real na Contabo/Hetzner — mas já fica pronto para
-quando a Fase 7 provisionar recursos cloud reais, evitando o cenário de
-"esqueci-me de desligar e a fatura veio grande".
+Right now (Phase 7 not done yet) this doesn't actually delete anything,
+because there's no real VM on Contabo/Hetzner yet — but it's already ready
+for when Phase 7 provisions real cloud resources, avoiding the "forgot to
+turn it off and the bill came in big" scenario.
 
 ---
 
 ## 7. Scripts (`scripts/`)
 
-- `bootstrap-tools.sh` — instala Go, kind, kubectl, helm, flux em
-  `~/.local`, sem precisar de sudo. Corrido uma vez por máquina de
-  desenvolvimento (`make tools`).
-- `teardown-cloud.sh` — ver secção 6.2; também corre localmente
-  (`bash scripts/teardown-cloud.sh`) para quem quiser desligar tudo à mão.
-- `contabo/` — `auth.sh` (OAuth2 password grant), `create-vps.sh`
-  (cria um VPS com `cloud-init.yaml` que instala k3s+Flux),
-  `list-instances.sh`, `delete-instance.sh`. Ver o `README.md` local para
-  a discussão sobre porque a Contabo (billing mensal, sem downgrade) não é
-  o provider certo para demonstrar *elasticidade de máquinas* — só serve
-  como infraestrutura fixa barata ou demonstração de automação por API. A
-  Hetzner (billing à hora, autoscaler oficial) é a escolha para a Fase 7.
+- `bootstrap-tools.sh` — installs Go, kind, kubectl, helm, flux into
+  `~/.local`, no sudo needed. Run once per development machine
+  (`make tools`).
+- `teardown-cloud.sh` — see section 6.2; also runs locally
+  (`bash scripts/teardown-cloud.sh`) for anyone who wants to shut
+  everything down by hand.
+- `contabo/` — `auth.sh` (OAuth2 password grant), `create-vps.sh` (creates
+  a VPS with `cloud-init.yaml` that installs k3s+Flux), `list-instances.sh`,
+  `delete-instance.sh`. See the local `README.md` for the discussion of why
+  Contabo (monthly billing, no downgrade) isn't the right provider to
+  demonstrate *machine elasticity* — it only works as cheap fixed
+  infrastructure or an API-automation demo. Hetzner (hourly billing,
+  official autoscaler) is the choice for Phase 7.
 
 ---
 
 ## 8. `hack/` vs `gitops/infrastructure/`
 
-Ficheiros parecidos existem duas vezes de propósito:
-- `hack/kafka.yaml`, `hack/loadgen.yaml` — usados pelo fluxo de
-  desenvolvimento rápido (`make demo-up`), que usa `kind load docker-image`
-  para meter imagens locais no cluster **sem precisar de as publicar**.
-  Aponta para tags `:dev` construídas localmente.
+Similar files exist twice on purpose:
+- `hack/kafka.yaml`, `hack/loadgen.yaml` — used by the fast development
+  loop (`make demo-up`), which uses `kind load docker-image` to get local
+  images into the cluster **without needing to publish them**. They point
+  at locally-built `:dev` tags.
 - `gitops/infrastructure/kafka-cluster/kafka.yaml`,
-  `gitops/infrastructure/demo/loadgen.yaml` — a versão que o Flux realmente
-  aplica a partir do Git, com imagens GHCR versionadas (`:0.1.0`, etc.) e
+  `gitops/infrastructure/demo/loadgen.yaml` — the version Flux actually
+  applies from Git, with versioned GHCR images (`:0.1.0`, etc.) and
   `imagePullSecrets`.
 
-São mantidos em sincronia manualmente (não há um único source of truth
-entre os dois) porque servem propósitos diferentes: um é o ciclo de
-"código → `make demo-up` → testar em segundos", o outro é o ciclo real de
-GitOps "commit → Flux aplica sozinho". Se um dia isto incomodar, a correção
-seria gerar `hack/*.yaml` a partir de `gitops/infrastructure/*` com
-Kustomize patches, mas para a escala deste projeto a duplicação explícita é
-mais fácil de ler do que essa indireção.
+They're kept in sync by hand (there's no single source of truth between
+the two) because they serve different purposes: one is the "code →
+`make demo-up` → test in seconds" cycle, the other is the real GitOps
+cycle of "commit → Flux applies on its own". If this ever becomes annoying,
+the fix would be to generate `hack/*.yaml` from
+`gitops/infrastructure/*` with Kustomize patches, but at this project's
+scale the explicit duplication is easier to read than that indirection.

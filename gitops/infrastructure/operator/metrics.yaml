@@ -1,6 +1,6 @@
-# Expõe as métricas do próprio operator (zeedfai_operator_*: lag, réplicas
-# desejadas/prontas por pipeline) ao Prometheus — é daqui que a GUI do
-# platform-api tira as séries temporais de lag e réplicas.
+# Exposes the operator's own metrics (zeedfai_operator_*: lag, desired/ready
+# replicas per pipeline) to Prometheus — this is where the platform-api GUI
+# gets its lag/replicas time series from.
 apiVersion: v1
 kind: Service
 metadata:

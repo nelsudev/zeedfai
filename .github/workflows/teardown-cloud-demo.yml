@@ -1,12 +1,12 @@
 name: Teardown cloud demo
 
-# Rede de segurança de custo: destrói qualquer VM de demo (Contabo/Hetzner)
-# esquecida ligada. Corre manualmente (botão "Run workflow") e também todas
-# as noites, para o caso de alguém se esquecer de desligar no fim do dia.
+# Cost safety net: destroys any zeedfai demo VM (Contabo/Hetzner) left
+# running. Runs manually (via the "Run workflow" button) and also every
+# night, in case someone forgets to tear it down at the end of the day.
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0 3 * * *" # 03:00 UTC diariamente
+    - cron: "0 3 * * *" # 03:00 UTC daily
 
 jobs:
   teardown:

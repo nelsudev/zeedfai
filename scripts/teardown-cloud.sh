@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Destrói qualquer recurso cloud de demo do zeedfai (Contabo + Hetzner).
-# Idempotente e seguro por omissão: se as credenciais de um provider não
-# estiverem definidas, esse provider é simplesmente ignorado (não falha).
+# Destroys any zeedfai demo cloud resource (Contabo + Hetzner).
+# Idempotent and safe by default: if a provider's credentials aren't set,
+# that provider is simply skipped (never fails).
 #
-# Usado pela GitHub Action .github/workflows/teardown-cloud-demo.yml como
-# rede de segurança contra recursos esquecidos a gastar dinheiro, e pode ser
-# corrido localmente da mesma forma.
+# Used by the .github/workflows/teardown-cloud-demo.yml GitHub Action as a
+# safety net against forgotten resources burning money, and can be run
+# locally the same way.
 set -uo pipefail
 
-echo "=== zeedfai: teardown de recursos cloud de demo ==="
+echo "=== zeedfai: cloud demo resource teardown ==="
 
 # --- Contabo -----------------------------------------------------------
 if [[ -n "${CNTB_CLIENT_ID:-}" && -n "${CNTB_CLIENT_SECRET:-}" && -n "${CNTB_API_USER:-}" && -n "${CNTB_API_PASS:-}" ]]; then
-  echo "--- Contabo: a listar instâncias ---"
+  echo "--- Contabo: listing instances ---"
   cd "$(dirname "$0")/contabo"
   TOKEN=$(./auth.sh)
   mapfile -t IDS < <(curl -fsS 'https://api.contabo.com/v1/compute/instances' \
@@ -25,35 +25,35 @@ for i in json.load(sys.stdin).get("data", []):
         print(i["instanceId"])
 ')
   if [[ ${#IDS[@]} -eq 0 ]]; then
-    echo "Contabo: nenhuma instância 'zeedfai*' encontrada."
+    echo "Contabo: no 'zeedfai*' instance found."
   else
     for id in "${IDS[@]}"; do
-      echo "Contabo: a cancelar instância $id"
-      ./delete-instance.sh "$id" || echo "AVISO: falha ao cancelar $id"
+      echo "Contabo: cancelling instance $id"
+      ./delete-instance.sh "$id" || echo "WARNING: failed to cancel $id"
     done
   fi
   cd - >/dev/null
 else
-  echo "Contabo: credenciais não definidas (CNTB_*), a saltar."
+  echo "Contabo: credentials not set (CNTB_*), skipping."
 fi
 
 # --- Hetzner Cloud -------------------------------------------------------
 if [[ -n "${HCLOUD_TOKEN:-}" ]]; then
-  echo "--- Hetzner: a listar servers com label zeedfai=true ---"
+  echo "--- Hetzner: listing servers with label zeedfai=true ---"
   SERVERS=$(curl -fsS -H "Authorization: Bearer ${HCLOUD_TOKEN}" \
     "https://api.hetzner.cloud/v1/servers?label_selector=zeedfai%3Dtrue" \
     | python3 -c 'import sys,json;[print(s["id"]) for s in json.load(sys.stdin).get("servers",[])]')
   if [[ -z "$SERVERS" ]]; then
-    echo "Hetzner: nenhum server com label zeedfai=true encontrado."
+    echo "Hetzner: no server with label zeedfai=true found."
   else
     for id in $SERVERS; do
-      echo "Hetzner: a apagar server $id"
+      echo "Hetzner: deleting server $id"
       curl -fsS -X DELETE -H "Authorization: Bearer ${HCLOUD_TOKEN}" \
-        "https://api.hetzner.cloud/v1/servers/$id" || echo "AVISO: falha ao apagar $id"
+        "https://api.hetzner.cloud/v1/servers/$id" || echo "WARNING: failed to delete $id"
     done
   fi
 else
-  echo "Hetzner: HCLOUD_TOKEN não definido, a saltar."
+  echo "Hetzner: HCLOUD_TOKEN not set, skipping."
 fi
 
-echo "=== teardown concluído ==="
+echo "=== teardown complete ==="

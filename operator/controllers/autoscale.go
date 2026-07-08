@@ -15,8 +15,8 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// prometheusURL aponta para o kube-prometheus-stack instalado via GitOps
-// (gitops/infrastructure/monitoring). Configurável para testes.
+// prometheusURL points at the kube-prometheus-stack installed via GitOps
+// (gitops/infrastructure/monitoring). Configurable for tests.
 var prometheusURL = getenvDefault("PROMETHEUS_URL", "http://monitoring-kube-prometheus-prometheus.monitoring.svc:9090")
 
 func getenvDefault(k, def string) string {
@@ -26,9 +26,10 @@ func getenvDefault(k, def string) string {
 	return def
 }
 
-// consumerLag soma o lag (end offset - committed offset) de todas as
-// partições do grupo consumidor. Cria e fecha um cliente Kafka efémero por
-// avaliação — aceitável à escala de um punhado de pipelines por reconcile.
+// consumerLag sums the lag (end offset - committed offset) across all
+// partitions of the consumer group. Creates and closes an ephemeral Kafka
+// client per evaluation — acceptable at the scale of a handful of
+// pipelines per reconcile.
 func consumerLag(ctx context.Context, brokers []string, group, topic string) (int64, error) {
 	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...))
 	if err != nil {
@@ -59,7 +60,7 @@ func consumerLag(ctx context.Context, brokers []string, group, topic string) (in
 	return lag, nil
 }
 
-// desiredReplicasFromLag arredonda para cima: lag/targetLagPerReplica.
+// desiredReplicasFromLag rounds up: lag/targetLagPerReplica.
 func desiredReplicasFromLag(lag int64, targetLagPerReplica int64, min, max int32) int32 {
 	if targetLagPerReplica <= 0 {
 		targetLagPerReplica = 1000
@@ -74,9 +75,9 @@ func desiredReplicasFromLag(lag int64, targetLagPerReplica int64, min, max int32
 	return d
 }
 
-// sloLatencyViolated consulta o Prometheus para a p99.9 do pipeline; retorna
-// false (sem violação) em caso de erro/sem dados, para não bloquear o
-// reconcile por indisponibilidade temporária de métricas.
+// sloLatencyViolated queries Prometheus for the pipeline's p99.9; returns
+// false (no violation) on error/no data, so a temporary metrics outage
+// doesn't block the reconcile.
 func sloLatencyViolated(ctx context.Context, pipeline string, maxMs int32) bool {
 	q := fmt.Sprintf(`histogram_quantile(0.999, sum(rate(zeedfai_scorer_latency_seconds_bucket{pipeline=%q}[2m])) by (le))`, pipeline)
 	u := fmt.Sprintf("%s/api/v1/query?query=%s", strings.TrimRight(prometheusURL, "/"), url.QueryEscape(q))

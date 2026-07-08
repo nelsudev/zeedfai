@@ -26,19 +26,19 @@ import (
 	platformv1alpha1 "github.com/bastian/zeedfai/operator/api/v1alpha1"
 )
 
-// Testes de integração com envtest (kube-apiserver + etcd reais, sem
-// kubelet). Kafka e Prometheus não existem aqui: o autoscaler degrada
-// (lag indisponível → mantém minReplicas) e a observability salta
-// ServiceMonitor/PrometheusRule (CRDs ausentes) mas cria o PDB — ambos os
-// caminhos degradados fazem parte do que está a ser testado.
+// Integration tests with envtest (real kube-apiserver + etcd, no
+// kubelet). Kafka and Prometheus don't exist here: the autoscaler
+// degrades (lag unavailable → keeps minReplicas) and observability
+// skips ServiceMonitor/PrometheusRule (CRDs absent) but still creates
+// the PDB — both degraded paths are part of what's being tested.
 //
-// Requer os binários do envtest: make envtest (ou setup-envtest use).
+// Requires the envtest binaries: make envtest (or setup-envtest use).
 
 var k8sClient client.Client
 
 func TestMain(m *testing.M) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
-		fmt.Println("SKIP: KUBEBUILDER_ASSETS não definido (correr 'make test-integration')")
+		fmt.Println("SKIP: KUBEBUILDER_ASSETS not set (run 'make test-integration')")
 		os.Exit(0)
 	}
 	testEnv := &envtest.Environment{
@@ -92,7 +92,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	t.Fatalf("timeout à espera de: %s", what)
+	t.Fatalf("timeout waiting for: %s", what)
 }
 
 func newPipeline(name string) *platformv1alpha1.ScoringPipeline {
@@ -114,11 +114,11 @@ func TestReconcileCreatesWorkload(t *testing.T) {
 	}
 
 	var dep appsv1.Deployment
-	eventually(t, "deployment criado", func() bool {
+	eventually(t, "deployment created", func() bool {
 		return k8sClient.Get(ctx, types.NamespacedName{Name: "p1-scorer", Namespace: "default"}, &dep) == nil
 	})
 	if *dep.Spec.Replicas != 2 {
-		t.Errorf("replicas = %d, esperado 2 (minReplicas; lag indisponível)", *dep.Spec.Replicas)
+		t.Errorf("replicas = %d, expected 2 (minReplicas; lag unavailable)", *dep.Spec.Replicas)
 	}
 	c := dep.Spec.Template.Spec.Containers[0]
 	if c.Image != "example.com/scorer:test" {
@@ -133,7 +133,7 @@ func TestReconcileCreatesWorkload(t *testing.T) {
 		"KAFKA_GROUP": "g-p1", "PIPELINE_NAME": "p1",
 	} {
 		if envs[k] != want {
-			t.Errorf("env %s = %q, esperado %q", k, envs[k], want)
+			t.Errorf("env %s = %q, expected %q", k, envs[k], want)
 		}
 	}
 	if len(dep.Spec.Template.Spec.ImagePullSecrets) != 1 || dep.Spec.Template.Spec.ImagePullSecrets[0].Name != "ghcr-pull" {
@@ -141,15 +141,15 @@ func TestReconcileCreatesWorkload(t *testing.T) {
 	}
 
 	var svc corev1.Service
-	eventually(t, "service criado", func() bool {
+	eventually(t, "service created", func() bool {
 		return k8sClient.Get(ctx, types.NamespacedName{Name: "p1-scorer", Namespace: "default"}, &svc) == nil
 	})
 	if svc.Labels["zeedfai.io/pipeline"] != "p1" {
-		t.Errorf("service sem label de pipeline (regressão do bug do ServiceMonitor): %v", svc.Labels)
+		t.Errorf("service missing pipeline label (regression of the ServiceMonitor bug): %v", svc.Labels)
 	}
 
 	var pdb policyv1.PodDisruptionBudget
-	eventually(t, "pdb criado (mesmo sem CRDs de monitoring)", func() bool {
+	eventually(t, "pdb created (even without monitoring CRDs)", func() bool {
 		return k8sClient.Get(ctx, types.NamespacedName{Name: "p1-scorer", Namespace: "default"}, &pdb) == nil
 	})
 }
@@ -162,13 +162,13 @@ func TestSelfHealingRecreatesDeployment(t *testing.T) {
 	}
 	var dep appsv1.Deployment
 	key := types.NamespacedName{Name: "p2-scorer", Namespace: "default"}
-	eventually(t, "deployment criado", func() bool { return k8sClient.Get(ctx, key, &dep) == nil })
+	eventually(t, "deployment created", func() bool { return k8sClient.Get(ctx, key, &dep) == nil })
 
 	uid := dep.UID
 	if err := k8sClient.Delete(ctx, &dep); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "deployment recriado após delete", func() bool {
+	eventually(t, "deployment recreated after delete", func() bool {
 		var d appsv1.Deployment
 		if err := k8sClient.Get(ctx, key, &d); err != nil {
 			return false
@@ -187,15 +187,15 @@ func TestCanaryDeploymentLifecycle(t *testing.T) {
 
 	key := types.NamespacedName{Name: "p3-scorer-canary", Namespace: "default"}
 	var canary appsv1.Deployment
-	eventually(t, "canary deployment criado", func() bool { return k8sClient.Get(ctx, key, &canary) == nil })
+	eventually(t, "canary deployment created", func() bool { return k8sClient.Get(ctx, key, &canary) == nil })
 	if got := canary.Spec.Template.Spec.Containers[0].Image; got != "example.com/scorer:candidate" {
 		t.Errorf("canary image = %s", got)
 	}
-	// 50% de 2 réplicas stable = 1 réplica canary
+	// 50% of 2 stable replicas = 1 canary replica
 	if *canary.Spec.Replicas != 1 {
-		t.Errorf("canary replicas = %d, esperado 1", *canary.Spec.Replicas)
+		t.Errorf("canary replicas = %d, expected 1", *canary.Spec.Replicas)
 	}
-	// env ROLE=canary e mesmo consumer group do stable (split por partições)
+	// env ROLE=canary and same consumer group as stable (partition split)
 	envs := map[string]string{}
 	for _, e := range canary.Spec.Template.Spec.Containers[0].Env {
 		envs[e.Name] = e.Value
@@ -204,7 +204,7 @@ func TestCanaryDeploymentLifecycle(t *testing.T) {
 		t.Errorf("canary env = %v", envs)
 	}
 
-	// desativar o canary remove o deployment
+	// disabling the canary removes the deployment
 	eventually(t, "patch canary disabled", func() bool {
 		var cur platformv1alpha1.ScoringPipeline
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: "p3", Namespace: "default"}, &cur); err != nil {
@@ -213,7 +213,7 @@ func TestCanaryDeploymentLifecycle(t *testing.T) {
 		cur.Spec.Canary.Enabled = false
 		return k8sClient.Update(ctx, &cur) == nil
 	})
-	eventually(t, "canary deployment removido", func() bool {
+	eventually(t, "canary deployment removed", func() bool {
 		var d appsv1.Deployment
 		err := k8sClient.Get(ctx, key, &d)
 		return apierrors.IsNotFound(err) || (err == nil && d.DeletionTimestamp != nil)

@@ -9,3 +9,4 @@ v2.3.0
 .terraform/
 *.tfstate*
 .terraform.lock.hcl
+platform-api/platform-api
