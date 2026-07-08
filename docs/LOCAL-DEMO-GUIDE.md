@@ -21,7 +21,7 @@ are from those runs.
 - `git`, `curl`, `make`
 
 ```bash
-git clone https://github.com/nelsudev/zeedfai && cd zeedfai
+git clone https://github.com/nelsudev/zeedfai-kubernetes-operator-gitops && cd zeedfai-kubernetes-operator-gitops
 make tools     # installs go, kind, kubectl, helm, flux into ~/.local (no sudo)
 export PATH="$HOME/.local/bin:$HOME/.local/go/bin:$PATH"
 ```
@@ -37,7 +37,7 @@ Two ways to run the operator:
 - **Dev loop (no registry needed):** `make run` in one terminal (runs the
   operator outside the cluster against kind), then `make deploy-sample`.
 - **Full GitOps (what production looks like):** fork the repo, run
-  `flux bootstrap github --owner=<you> --repository=zeedfai --branch=main
+  `flux bootstrap github --owner=<you> --repository=zeedfai-kubernetes-operator-gitops --branch=main
   --path=gitops/clusters/staging --personal`, and create the `ghcr-pull`
   secret per `gitops/infrastructure/operator/README.md`. Flux then installs
   everything, including the operator in-cluster.

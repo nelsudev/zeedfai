@@ -20,7 +20,7 @@ import (
 	platformv1alpha1 "github.com/bastian/zeedfai/operator/api/v1alpha1"
 )
 
-const runbookBaseURL = "https://github.com/nelsudev/zeedfai/blob/main/runbooks"
+const runbookBaseURL = "https://github.com/nelsudev/zeedfai-kubernetes-operator-gitops/blob/main/runbooks"
 
 // ScoringPipelineReconciler reconciles ScoringPipelines: Deployment +
 // Service, autoscaling by consumer lag, SLO self-healing, canary analysis,

@@ -56,7 +56,7 @@ Deployment, then keeps it healthy on its own:
 
 ```mermaid
 flowchart LR
-  subgraph git [GitHub: nelsudev/zeedfai]
+  subgraph git [GitHub: nelsudev/zeedfai-kubernetes-operator-gitops]
     G[(main)]
   end
   subgraph cluster [Kubernetes cluster]
@@ -96,7 +96,7 @@ Everything runs locally on **kind** (Kubernetes-in-Docker).
   into `~/.local` by the first command below, no sudo needed.
 
 ```bash
-git clone https://github.com/nelsudev/zeedfai && cd zeedfai
+git clone https://github.com/nelsudev/zeedfai-kubernetes-operator-gitops && cd zeedfai-kubernetes-operator-gitops
 make tools                                            # go, kind, kubectl, helm, flux → ~/.local
 export PATH="$HOME/.local/bin:$HOME/.local/go/bin:$PATH"
 

@@ -13,7 +13,7 @@ gitops/
 Bootstrap (once the repo is on GitHub):
 
 ```bash
-flux bootstrap github --owner=<user> --repository=zeedfai \
+flux bootstrap github --owner=<user> --repository=zeedfai-kubernetes-operator-gitops \
   --branch=main --path=gitops/clusters/staging --personal
 ```
 
