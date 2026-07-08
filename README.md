@@ -6,6 +6,7 @@
 > and observed through GitOps. Everything below was run and verified live,
 > not just written.
 
+[![CI](https://github.com/nelsudev/zeedfai-kubernetes-operator-gitops/actions/workflows/ci.yml/badge.svg)](https://github.com/nelsudev/zeedfai-kubernetes-operator-gitops/actions/workflows/ci.yml)
 [![Made with Claude Fable](https://img.shields.io/badge/made%20with-Claude%20Fable-6ea8fe?style=flat-square&logo=anthropic&logoColor=white)](https://claude.ai)
 ![Go](https://img.shields.io/badge/Go-controller--runtime-00ADD8?style=flat-square&logo=go&logoColor=white)
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-operator-326CE5?style=flat-square&logo=kubernetes&logoColor=white)
@@ -80,6 +81,15 @@ flowchart LR
 Full walkthrough of every file and every design decision (and why):
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+## 👀 What it looks like
+
+The built-in operations GUI, captured during a real 4 000 ev/s burst — lag
+spikes, the operator scales 2→10 replicas, the backlog drains, cooldown-paced
+scale-in brings it back down, and p99.9 latency never crosses the 250 ms SLO
+line:
+
+![zeedfai operations GUI during a live burst](docs/img/platform-gui.png)
+
 ## 🚀 Quick start
 
 Everything runs locally on **kind** (Kubernetes-in-Docker).
@@ -152,7 +162,7 @@ Hit a wall? [`docs/FAQ.md`](docs/FAQ.md) — real problems, real fixes.
 - [x] **Autoscaler + self-healing** — verified live: 3000 ev/s burst → 2→10→2 replicas
 - [x] **Canary + automatic rollback** — verified live: 50%-fault image rolled back in ~80s
 - [x] **Operations API + GUI** — read-only, live charts, burst button
-- [~] **Cloud node autoscaling** — Terraform for Hetzner ready and validated; `apply` pending an account/token. Proven locally with k3d in the meantime (see the demo guide)
+- [ ] ⏳ **Cloud node autoscaling** — Terraform for Hetzner ready and validated; `apply` pending an account/token. Proven locally with k3d in the meantime (see the demo guide)
 
 ## 🤖 Made with Claude Fable
 
