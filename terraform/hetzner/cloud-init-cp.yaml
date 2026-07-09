@@ -1,5 +1,54 @@
 #cloud-config
 package_update: true
 packages: [curl]
+write_files:
+  - path: /usr/local/sbin/configure-hetzner-private-net
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      set -eu
+
+      metadata="$(curl -fsS http://169.254.169.254/hetzner/v1/metadata/private-networks)"
+      public_ipv4="$(curl -fsS http://169.254.169.254/hetzner/v1/metadata/public-ipv4)"
+      mac="$(printf '%s\n' "$metadata" | awk '/mac_address:/ {print tolower($2); exit}')"
+      private_iface=""
+
+      for address_file in /sys/class/net/*/address; do
+        iface="$(basename "$(dirname "$address_file")")"
+        if [ "$(cat "$address_file")" = "$mac" ]; then
+          private_iface="$iface"
+          break
+        fi
+      done
+
+      if [ -z "$private_iface" ]; then
+        echo "could not find Hetzner private interface with MAC $mac" >&2
+        exit 1
+      fi
+
+      cat > /etc/netplan/60-hetzner-private.yaml <<EOF
+      network:
+        version: 2
+        ethernets:
+          $private_iface:
+            addresses:
+              - ${private_ip}/32
+            nameservers:
+              addresses:
+                - 185.12.64.1
+                - 185.12.64.2
+                - 1.1.1.1
+            routes:
+              - to: 10.0.0.1/32
+                scope: link
+              - to: 10.0.0.0/16
+                via: 10.0.0.1
+      EOF
+
+      chmod 600 /etc/netplan/60-hetzner-private.yaml
+      netplan apply
+      printf '%s\n' "$private_iface" > /run/hetzner-private-interface
+      printf '%s\n' "$public_ipv4" > /run/hetzner-public-ipv4
 runcmd:
-  - curl -sfL https://get.k3s.io | K3S_TOKEN="${k3s_token}" INSTALL_K3S_EXEC="server --write-kubeconfig-mode 644 --node-ip 10.0.1.10 --flannel-iface enp7s0" sh -
+  - /usr/local/sbin/configure-hetzner-private-net
+  - curl -fL https://get.k3s.io -o /root/install-k3s.sh && PRIVATE_IFACE="$(cat /run/hetzner-private-interface)" && PUBLIC_IPV4="$(cat /run/hetzner-public-ipv4)" && K3S_TOKEN="${k3s_token}" INSTALL_K3S_EXEC="server --write-kubeconfig-mode 644 --node-ip ${private_ip} --advertise-address ${private_ip} --tls-san ${private_ip} --tls-san $PUBLIC_IPV4 --flannel-iface $PRIVATE_IFACE" sh /root/install-k3s.sh
