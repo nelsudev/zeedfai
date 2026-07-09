@@ -39,6 +39,7 @@ write_files:
                 via: 10.0.0.1
       EOF
 
+      chmod 600 /etc/netplan/60-hetzner-private.yaml
       netplan apply
       printf '%s\n' "$private_iface" > /run/hetzner-private-interface
 runcmd:

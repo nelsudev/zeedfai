@@ -9,6 +9,7 @@ write_files:
       set -eu
 
       metadata="$(curl -fsS http://169.254.169.254/hetzner/v1/metadata/private-networks)"
+      public_ipv4="$(curl -fsS http://169.254.169.254/hetzner/v1/metadata/public-ipv4)"
       mac="$(printf '%s\n' "$metadata" | awk '/mac_address:/ {print tolower($2); exit}')"
       private_iface=""
 
@@ -39,8 +40,10 @@ write_files:
                 via: 10.0.0.1
       EOF
 
+      chmod 600 /etc/netplan/60-hetzner-private.yaml
       netplan apply
       printf '%s\n' "$private_iface" > /run/hetzner-private-interface
+      printf '%s\n' "$public_ipv4" > /run/hetzner-public-ipv4
 runcmd:
   - /usr/local/sbin/configure-hetzner-private-net
-  - PRIVATE_IFACE="$(cat /run/hetzner-private-interface)" && PUBLIC_IPV4="$(curl -fsS http://169.254.169.254/hetzner/v1/metadata/public-ipv4)" && curl -sfL https://get.k3s.io | K3S_TOKEN="${k3s_token}" INSTALL_K3S_EXEC="server --write-kubeconfig-mode 644 --node-ip ${private_ip} --advertise-address ${private_ip} --tls-san ${private_ip} --tls-san $PUBLIC_IPV4 --flannel-iface $PRIVATE_IFACE" sh -
+  - PRIVATE_IFACE="$(cat /run/hetzner-private-interface)" && PUBLIC_IPV4="$(cat /run/hetzner-public-ipv4)" && curl -sfL https://get.k3s.io | K3S_TOKEN="${k3s_token}" INSTALL_K3S_EXEC="server --write-kubeconfig-mode 644 --node-ip ${private_ip} --advertise-address ${private_ip} --tls-san ${private_ip} --tls-san $PUBLIC_IPV4 --flannel-iface $PRIVATE_IFACE" sh -
