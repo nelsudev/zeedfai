@@ -44,4 +44,6 @@ write_files:
       printf '%s\n' "$private_iface" > /run/hetzner-private-interface
 runcmd:
   - /usr/local/sbin/configure-hetzner-private-net
-  - PRIVATE_IFACE="$(cat /run/hetzner-private-interface)" && curl -sfL https://get.k3s.io | K3S_URL="https://${cp_ip}:6443" K3S_TOKEN="${k3s_token}" INSTALL_K3S_EXEC="agent --node-ip ${private_ip} --flannel-iface $PRIVATE_IFACE" sh -
+  - until curl -kfsS https://${cp_ip}:6443/cacerts >/dev/null; do echo "waiting for k3s server"; sleep 5; done
+  - curl -sfL https://get.k3s.io -o /tmp/install-k3s.sh
+  - PRIVATE_IFACE="$(cat /run/hetzner-private-interface)" && K3S_URL="https://${cp_ip}:6443" K3S_TOKEN="${k3s_token}" INSTALL_K3S_EXEC="agent --node-ip ${private_ip} --flannel-iface $PRIVATE_IFACE" sh /tmp/install-k3s.sh
