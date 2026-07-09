@@ -2,8 +2,8 @@
 
 Branch: `cloud/hetzner-e2e-validation`
 
-Result: **the platform works on real Hetzner Cloud after fixing bootstrap and
-GitOps ordering issues.**
+Result: **the platform works on real Hetzner Cloud after fixing bootstrap,
+networking, firewall, and GitOps ordering issues.**
 
 ## Environment
 
@@ -12,7 +12,10 @@ GitOps ordering issues.**
 - Nodes: 1 control-plane, 1 worker
 - OS image: Ubuntu 24.04
 - Kubernetes: k3s `v1.36.2+k3s1`
-- Flux source tested: `main@sha1:22a3655db04677c1116675088075656c777f98d8`
+- Flux source tested in the full application run:
+  `main@sha1:22a3655db04677c1116675088075656c777f98d8`
+- Fresh Terraform/cloud-init validation commit:
+  `a9d3f97 preserve DNS for Hetzner private netplan`
 - GHCR auth: `ghcr-pull` created in `default` and `zeedfai-system`
 
 ## What passed
@@ -26,14 +29,24 @@ GitOps ordering issues.**
 ### Hetzner provisioning
 
 - Terraform created the Hetzner network, subnet, SSH key, k3s token,
-  control-plane server, and worker server.
-- Final node state after bootstrap fixes:
+  firewall, control-plane server, and worker server.
+- A clean destroy/apply of the committed PR branch created both nodes with
+  private networking and dynamic private NIC detection.
+- The control-plane and worker both detected `enp7s0` at runtime; the NIC name
+  is no longer hardcoded in Terraform inputs or k3s flags.
+- The firewall allows SSH and ICMP publicly, and restricts Kubernetes API
+  `tcp/6443` to the validation workstation `/32`.
+- Final node state from the clean review follow-up run:
 
 ```text
 NAME               STATUS   ROLES           VERSION        INTERNAL-IP
 zeedfai-cp         Ready    control-plane   v1.36.2+k3s1   10.0.1.10
-zeedfai-worker-0   Ready    <none>          v1.36.2+k3s1   10.0.1.1
+zeedfai-worker-0   Ready    <none>          v1.36.2+k3s1   10.0.1.20
 ```
+
+Note: the worker still reports Hetzner/cloud-init recoverable `init-local`
+schema warnings, but `runcmd` completed, `k3s-agent` is active, flannel uses
+the private interface, and Kubernetes reports the worker `Ready`.
 
 ### GitOps platform install
 
@@ -133,8 +146,9 @@ enp7s0 DOWN
 k3s was started with `--node-ip 10.0.1.10 --flannel-iface enp7s0`, causing
 the control-plane to restart until the interface was manually configured.
 
-Fix: cloud-init now writes netplan for `enp7s0` with a `/32` private IP plus
-the Hetzner gateway route:
+Fix: cloud-init now detects the Hetzner private NIC by MAC address and writes
+netplan with a `/32` private IP, explicit DNS resolvers, and the Hetzner
+gateway route:
 
 ```text
 10.0.0.1 dev enp7s0 scope link
@@ -153,7 +167,7 @@ INTERNAL-IP <worker-public-ip>
 Fix: worker cloud-init now starts k3s agent with:
 
 ```text
---node-ip <private-ip> --flannel-iface enp7s0
+--node-ip <private-ip> --flannel-iface <detected-private-iface>
 ```
 
 ### 4. Remote kubeconfig TLS SAN was incomplete
@@ -181,24 +195,47 @@ no matches for kind "ServiceMonitor" in version "monitoring.coreos.com/v1"
 Fix: `infra-operator` now depends on `infra-monitoring` as well as
 `infra-crds`.
 
+### 6. Kubernetes API was exposed publicly
+
+The initial Terraform did not attach a Hetzner firewall, so the public
+control-plane address exposed `tcp/6443` to the internet.
+
+Fix: Terraform now creates `hcloud_firewall.zeedfai`. SSH and ICMP remain
+open for demo access and diagnostics, while Kubernetes API access is controlled
+by `var.kube_api_allowed_cidrs`. The clean validation run used a single `/32`.
+
+### 7. k3s installer failed during early boot
+
+The review follow-up clean apply exposed two boot-time issues:
+
+- fetching public metadata after `netplan apply` could fail;
+- downloading the k3s installer to `/tmp` and replacing netplan without DNS
+  made the installer unreliable.
+
+Fix: cloud-init now reads public metadata before applying netplan, downloads
+the installer to `/root/install-k3s.sh`, preserves DNS in the generated
+netplan, and waits for the control-plane API before installing the worker
+agent.
+
 ## Remaining gaps
 
 - Canary rollback was not executed in this cloud run.
 - Hetzner cluster-autoscaler / real node scale-out was not installed or tested.
 - The run used Flux installed manually with an HTTPS Git source rather than a
   full `flux bootstrap github` deploy-key flow.
-- The live cluster used hotfixes for the first run; the Terraform/cloud-init
-  files now contain the permanent fix and should be validated with a fresh
-  destroy/apply cycle.
+- Full GitOps application reconciliation was proven in the first live run. The
+  review follow-up clean run focused on the Terraform/cloud-init fixes and
+  validated both k3s nodes from committed code.
 
 ## Teardown
 
-Teardown completed successfully:
+Initial full application run teardown completed successfully:
 
 ```bash
 terraform -chdir=terraform/hetzner destroy
 hcloud server list -o columns=name,labels | grep zeedfai || true
 ```
 
-Terraform destroyed 6 managed resources and the final `hcloud` check returned
-no servers with a `zeedfai` label.
+Terraform destroyed the managed resources and the final `hcloud` check returned
+no servers with a `zeedfai` label. The review follow-up validation cluster was
+also destroyed after collecting the clean node evidence.
